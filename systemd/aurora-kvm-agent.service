@@ -1,0 +1,19 @@
+[Unit]
+Description=Aurora KVM Metrics Agent
+After=network-online.target libvirtd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=-/etc/aurora-kvm-agent.env
+ExecStart=/usr/local/bin/aurora-kvm-agent
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=15
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
