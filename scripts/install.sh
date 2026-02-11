@@ -12,6 +12,7 @@ SERVICE_NAME="${AURORA_AGENT_SERVICE_NAME:-aurora-kvm-agent.service}"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
 ENV_FILE="${AURORA_AGENT_ENV_FILE:-/etc/aurora-kvm-agent.env}"
 VERSION="${AURORA_AGENT_VERSION:-latest}"
+TMP_DIR=""
 
 log() {
   printf '[%s] %s\n' "$SCRIPT_NAME" "$1"
@@ -42,6 +43,12 @@ run_root() {
   fi
   echo "This installer requires root or sudo." >&2
   exit 1
+}
+
+cleanup_tmp_dir() {
+  if [ -n "${TMP_DIR:-}" ] && [ -d "${TMP_DIR:-}" ]; then
+    rm -rf "${TMP_DIR}" || true
+  fi
 }
 
 require_cmd() {
@@ -195,6 +202,8 @@ EOF"
 
 main() {
   require_cmd tar
+  # Validate sudo/root availability early so installer fails fast with clear error.
+  run_root true
   local repo
   repo="$(resolve_repo_default)"
   local arch
@@ -210,15 +219,11 @@ main() {
     base_url="https://github.com/${repo}/releases/download/${VERSION}"
   fi
 
-  local tmp_dir
-  tmp_dir="$(mktemp -d /tmp/${APP_NAME}-install.XXXXXX)"
-  cleanup() {
-    rm -rf "$tmp_dir" || true
-  }
-  trap cleanup EXIT
+  TMP_DIR="$(mktemp -d /tmp/${APP_NAME}-install.XXXXXX)"
+  trap cleanup_tmp_dir EXIT
 
-  local tarball="${tmp_dir}/${asset}"
-  local checksums="${tmp_dir}/${checksum_asset}"
+  local tarball="${TMP_DIR}/${asset}"
+  local checksums="${TMP_DIR}/${checksum_asset}"
 
   log "downloading release asset repo=${repo} version=${VERSION} arch=${arch}"
   download_file "${base_url}/${asset}" "$tarball"
@@ -237,8 +242,8 @@ main() {
   fi
   log "checksum verification passed"
 
-  tar -xzf "$tarball" -C "$tmp_dir"
-  local extracted="${tmp_dir}/${APP_NAME}_linux_${arch}"
+  tar -xzf "$tarball" -C "$TMP_DIR"
+  local extracted="${TMP_DIR}/${APP_NAME}_linux_${arch}"
   if [ ! -f "$extracted" ]; then
     echo "Extracted binary not found: ${extracted}" >&2
     exit 1
