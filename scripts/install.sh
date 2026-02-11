@@ -180,6 +180,50 @@ set_env_kv() {
   fi
 }
 
+generate_node_id() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+    return
+  fi
+  if [ -r /proc/sys/kernel/random/uuid ]; then
+    cat /proc/sys/kernel/random/uuid | tr '[:upper:]' '[:lower:]'
+    return
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 16 | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\)$/\1-\2-\3-\4-\5/'
+    return
+  fi
+  local raw
+  raw="$(date +%s%N)$RANDOM$RANDOM"
+  raw="${raw}00000000000000000000000000000000"
+  raw="${raw:0:32}"
+  printf '%s' "$raw" | sed 's/^\(........\)\(....\)\(....\)\(....\)\(............\)$/\1-\2-\3-\4-\5/'
+}
+
+read_env_kv() {
+  local file="$1"
+  local key="$2"
+  if ! run_root test -f "$file"; then
+    printf ''
+    return
+  fi
+  run_root bash -lc "grep -E '^${key}=' '${file}' | tail -n1 | cut -d= -f2-" | tr -d '\r' | xargs || true
+}
+
+ensure_node_id() {
+  local node_id
+  node_id="$(printf '%s' "${AURORA_NODE_ID:-}" | xargs || true)"
+  if [ -z "$node_id" ]; then
+    node_id="$(read_env_kv "$ENV_FILE" "AURORA_NODE_ID")"
+  fi
+  if [ -z "$node_id" ]; then
+    node_id="$(generate_node_id)"
+    log "generated node_id=${node_id}"
+  fi
+  set_env_kv "$ENV_FILE" "AURORA_NODE_ID" "$node_id"
+  printf '%s' "$node_id"
+}
+
 apply_runtime_config() {
   local stream_mode
   stream_mode="$(normalize_stream_mode "${CLI_STREAM_MODE:-${AURORA_AGENT_STREAM_MODE:-grpc}}")"
@@ -400,6 +444,9 @@ main() {
   log "installed binary -> ${BIN_PATH}"
 
   ensure_env_file
+  local node_id
+  node_id="$(ensure_node_id)"
+  log "runtime node_id=${node_id}"
   apply_runtime_config
   install_systemd_unit
 
