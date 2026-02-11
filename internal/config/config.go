@@ -22,6 +22,7 @@ type Config struct {
 	NodeID                string
 	Hostname              string
 	LibvirtURI            string
+	ProbeListenAddr       string
 	NodePollInterval      time.Duration
 	VMPollInterval        time.Duration
 	HealthInterval        time.Duration
@@ -58,14 +59,15 @@ func Load() (Config, error) {
 		NodeID:                env("AURORA_NODE_ID", hostname),
 		Hostname:              hostname,
 		LibvirtURI:            env("AURORA_LIBVIRT_URI", "qemu+unix:///system"),
+		ProbeListenAddr:       env("AURORA_AGENT_PROBE_ADDR", "0.0.0.0:7443"),
 		NodePollInterval:      envDuration("AURORA_NODE_POLL_INTERVAL", 3*time.Second),
 		VMPollInterval:        envDuration("AURORA_VM_POLL_INTERVAL", 1*time.Second),
 		HealthInterval:        envDuration("AURORA_HEALTH_INTERVAL", 10*time.Second),
 		ReconnectInterval:     envDuration("AURORA_RECONNECT_INTERVAL", 4*time.Second),
 		ShutdownTimeout:       envDuration("AURORA_SHUTDOWN_TIMEOUT", 20*time.Second),
 		StreamMode:            StreamMode(strings.ToLower(env("AURORA_STREAM_MODE", string(StreamModeGRPC)))),
-		BackendGRPCAddr:       env("AURORA_BACKEND_GRPC_ADDR", "127.0.0.1:8443"),
-		BackendWSURL:          env("AURORA_BACKEND_WS_URL", "ws://127.0.0.1:8080/ws/metrics"),
+		BackendGRPCAddr:       env("AURORA_BACKEND_GRPC_ADDR", "127.0.0.1:3001"),
+		BackendWSURL:          env("AURORA_BACKEND_WS_URL", "ws://127.0.0.1:3001/ws/metrics"),
 		BackendToken:          env("AURORA_BACKEND_TOKEN", ""),
 		TLSEnabled:            envBool("AURORA_TLS_ENABLED", false),
 		TLSSkipVerify:         envBool("AURORA_TLS_SKIP_VERIFY", false),
@@ -96,6 +98,9 @@ func (c Config) Validate() error {
 	}
 	if c.LibvirtURI == "" {
 		return errors.New("AURORA_LIBVIRT_URI is required")
+	}
+	if strings.TrimSpace(c.ProbeListenAddr) == "" {
+		return errors.New("AURORA_AGENT_PROBE_ADDR is required")
 	}
 	if c.NodePollInterval <= 0 || c.VMPollInterval <= 0 {
 		return errors.New("poll intervals must be > 0")

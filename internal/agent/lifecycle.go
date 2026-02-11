@@ -27,6 +27,9 @@ func (a *Agent) run(ctx context.Context) error {
 	g.Go(func() error {
 		return a.runEventLoop(gctx)
 	})
+	g.Go(func() error {
+		return a.runProbeListener(gctx)
+	})
 
 	if err := g.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 		return err

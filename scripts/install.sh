@@ -13,6 +13,8 @@ SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
 ENV_FILE="${AURORA_AGENT_ENV_FILE:-/etc/aurora-kvm-agent.env}"
 VERSION="${AURORA_AGENT_VERSION:-latest}"
 TMP_DIR=""
+CLI_VM_SERVICE_ENDPOINT=""
+CLI_STREAM_MODE=""
 
 log() {
   printf '[%s] %s\n' "$SCRIPT_NAME" "$1"
@@ -57,6 +59,148 @@ require_cmd() {
     echo "Missing required command: ${cmd}" >&2
     exit 1
   fi
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --vmservice-endpoint)
+        if [ "$#" -lt 2 ]; then
+          echo "missing value for --vmservice-endpoint" >&2
+          exit 1
+        fi
+        CLI_VM_SERVICE_ENDPOINT="$(printf '%s' "$2" | xargs)"
+        shift 2
+        ;;
+      --stream-mode)
+        if [ "$#" -lt 2 ]; then
+          echo "missing value for --stream-mode" >&2
+          exit 1
+        fi
+        CLI_STREAM_MODE="$(printf '%s' "$2" | xargs)"
+        shift 2
+        ;;
+      --help|-h)
+        cat <<'EOF'
+Usage: install.sh [--vmservice-endpoint host:port|url] [--stream-mode grpc|websocket]
+EOF
+        exit 0
+        ;;
+      *)
+        echo "unknown argument: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+normalize_stream_mode() {
+  local mode
+  mode="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | xargs)"
+  case "$mode" in
+    ""|grpc|websocket) printf '%s' "${mode:-grpc}" ;;
+    *)
+      echo "invalid --stream-mode: ${1} (expected grpc|websocket)" >&2
+      exit 1
+      ;;
+  esac
+}
+
+extract_endpoint_hostport() {
+  local endpoint
+  endpoint="$(printf '%s' "${1:-}" | xargs)"
+  if [ -z "$endpoint" ]; then
+    printf ''
+    return
+  fi
+
+  if [[ "$endpoint" == *"://"* ]]; then
+    endpoint="${endpoint#*://}"
+    endpoint="${endpoint%%/*}"
+  fi
+
+  endpoint="${endpoint#\[}"
+  endpoint="${endpoint%\]}"
+  printf '%s' "$endpoint"
+}
+
+build_ws_url() {
+  local endpoint_raw="$1"
+  local endpoint
+  endpoint="$(printf '%s' "$endpoint_raw" | xargs)"
+  if [ -z "$endpoint" ]; then
+    printf 'ws://127.0.0.1:3001/ws/metrics'
+    return
+  fi
+
+  if [[ "$endpoint" == ws://* || "$endpoint" == wss://* ]]; then
+    if [[ "$endpoint" == */* ]]; then
+      printf '%s' "$endpoint"
+    else
+      printf '%s/ws/metrics' "$endpoint"
+    fi
+    return
+  fi
+  if [[ "$endpoint" == http://* ]]; then
+    endpoint="ws://${endpoint#http://}"
+    if [[ "$endpoint" == */* ]]; then
+      printf '%s' "$endpoint"
+    else
+      printf '%s/ws/metrics' "$endpoint"
+    fi
+    return
+  fi
+  if [[ "$endpoint" == https://* ]]; then
+    endpoint="wss://${endpoint#https://}"
+    if [[ "$endpoint" == */* ]]; then
+      printf '%s' "$endpoint"
+    else
+      printf '%s/ws/metrics' "$endpoint"
+    fi
+    return
+  fi
+
+  printf 'ws://%s/ws/metrics' "$endpoint"
+}
+
+set_env_kv() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+
+  local escaped="$value"
+  escaped="${escaped//\\/\\\\}"
+  escaped="${escaped//&/\\&}"
+  escaped="${escaped//|/\\|}"
+
+  if run_root grep -Eq "^${key}=" "$file"; then
+    run_root sed -i "s|^${key}=.*|${key}=${escaped}|g" "$file"
+  else
+    run_root bash -lc "printf '%s=%s\n' '${key}' '${value}' >> '${file}'"
+  fi
+}
+
+apply_runtime_config() {
+  local stream_mode
+  stream_mode="$(normalize_stream_mode "${CLI_STREAM_MODE:-${AURORA_AGENT_STREAM_MODE:-grpc}}")"
+  local endpoint
+  endpoint="$(extract_endpoint_hostport "${CLI_VM_SERVICE_ENDPOINT:-${AURORA_AGENT_VM_SERVICE_ENDPOINT:-}}")"
+
+  if [ "$stream_mode" = "grpc" ]; then
+    if [ -z "$endpoint" ]; then
+      endpoint="127.0.0.1:3001"
+    fi
+    set_env_kv "$ENV_FILE" "AURORA_STREAM_MODE" "grpc"
+    set_env_kv "$ENV_FILE" "AURORA_BACKEND_GRPC_ADDR" "$endpoint"
+    log "runtime config stream_mode=grpc backend_grpc_addr=${endpoint}"
+    return
+  fi
+
+  local ws_url
+  ws_url="$(build_ws_url "${CLI_VM_SERVICE_ENDPOINT:-${AURORA_AGENT_VM_SERVICE_ENDPOINT:-}}")"
+  set_env_kv "$ENV_FILE" "AURORA_STREAM_MODE" "websocket"
+  set_env_kv "$ENV_FILE" "AURORA_BACKEND_WS_URL" "$ws_url"
+  log "runtime config stream_mode=websocket backend_ws_url=${ws_url}"
 }
 
 resolve_repo_default() {
@@ -187,8 +331,9 @@ ensure_env_file() {
   run_root bash -lc "cat > '${ENV_FILE}' <<'EOF'
 AURORA_NODE_ID=
 AURORA_LIBVIRT_URI=qemu+unix:///system
+AURORA_AGENT_PROBE_ADDR=0.0.0.0:7443
 AURORA_STREAM_MODE=grpc
-AURORA_BACKEND_GRPC_ADDR=127.0.0.1:8443
+AURORA_BACKEND_GRPC_ADDR=127.0.0.1:3001
 AURORA_BACKEND_TOKEN=
 AURORA_TLS_ENABLED=false
 AURORA_TLS_SKIP_VERIFY=false
@@ -201,6 +346,7 @@ EOF"
 }
 
 main() {
+  parse_args "$@"
   require_cmd tar
   # Validate sudo/root availability early so installer fails fast with clear error.
   run_root true
@@ -254,6 +400,7 @@ main() {
   log "installed binary -> ${BIN_PATH}"
 
   ensure_env_file
+  apply_runtime_config
   install_systemd_unit
 
   if command -v systemctl >/dev/null 2>&1; then
