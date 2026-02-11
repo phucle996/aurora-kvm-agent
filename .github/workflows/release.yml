@@ -27,6 +27,18 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      - name: Trivy scan (source code)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          scanners: vuln,secret,misconfig
+          vuln-type: os,library
+
       - name: Build binaries
         env:
           APP_NAME: aurora-kvm-agent
@@ -60,4 +72,3 @@ jobs:
             dist/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
