@@ -75,6 +75,13 @@ connect libvirt
  -> health loop / reconnect
 ```
 
+## Graceful Shutdown
+
+- Nhận `SIGINT`/`SIGTERM` -> cancel toàn bộ collector loop
+- Chờ goroutines dừng trong `AURORA_SHUTDOWN_TIMEOUT` (mặc định `20s`)
+- Đóng stream sink và libvirt connection theo thứ tự
+- `systemd` đã set `TimeoutStopSec=35` để đủ thời gian drain
+
 ## Main Environment Variables
 
 Chi tiết đầy đủ xem `CONFIGURATION.md`.

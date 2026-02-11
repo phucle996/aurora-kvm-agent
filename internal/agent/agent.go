@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"aurora-kvm-agent/internal/collector"
 	"aurora-kvm-agent/internal/config"
@@ -59,13 +61,47 @@ func New(cfg config.Config, logger *slog.Logger) (*Agent, error) {
 
 func (a *Agent) Run(ctx context.Context) error {
 	a.logger.Info("starting aurora-kvm-agent", "node_id", a.cfg.NodeID, "libvirt_uri", a.cfg.LibvirtURI, "stream_mode", a.cfg.StreamMode)
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 
-	err := a.run(ctx)
-	a.shutdown(context.Background())
-	if err != nil {
-		return err
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- a.run(runCtx)
+	}()
+
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	var runErr error
+	select {
+	case runErr = <-runErrCh:
+		// Agent terminated by itself (startup error/runtime error/parent ctx canceled).
+	case sig := <-sigCh:
+		a.logger.Info("shutdown signal received, starting graceful shutdown", "signal", sig.String(), "timeout", a.cfg.ShutdownTimeout)
+		cancelRun()
+
+		graceTimer := time.NewTimer(a.cfg.ShutdownTimeout)
+		defer graceTimer.Stop()
+
+		select {
+		case runErr = <-runErrCh:
+			// graceful stop completed in time
+		case sig2 := <-sigCh:
+			a.logger.Warn("second signal received, forcing immediate shutdown", "signal", sig2.String())
+			runErr = context.Canceled
+		case <-graceTimer.C:
+			a.logger.Warn("graceful shutdown timeout reached, forcing shutdown", "timeout", a.cfg.ShutdownTimeout)
+			runErr = context.DeadlineExceeded
+		}
+	}
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), a.cfg.ShutdownTimeout)
+	defer cancelShutdown()
+	a.shutdown(shutdownCtx)
+
+	if runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, context.DeadlineExceeded) {
+		return runErr
 	}
 	a.logger.Info("aurora-kvm-agent stopped")
 	return nil

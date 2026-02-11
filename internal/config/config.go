@@ -26,6 +26,7 @@ type Config struct {
 	VMPollInterval        time.Duration
 	HealthInterval        time.Duration
 	ReconnectInterval     time.Duration
+	ShutdownTimeout       time.Duration
 	StreamMode            StreamMode
 	BackendGRPCAddr       string
 	BackendWSURL          string
@@ -61,6 +62,7 @@ func Load() (Config, error) {
 		VMPollInterval:        envDuration("AURORA_VM_POLL_INTERVAL", 1*time.Second),
 		HealthInterval:        envDuration("AURORA_HEALTH_INTERVAL", 10*time.Second),
 		ReconnectInterval:     envDuration("AURORA_RECONNECT_INTERVAL", 4*time.Second),
+		ShutdownTimeout:       envDuration("AURORA_SHUTDOWN_TIMEOUT", 20*time.Second),
 		StreamMode:            StreamMode(strings.ToLower(env("AURORA_STREAM_MODE", string(StreamModeGRPC)))),
 		BackendGRPCAddr:       env("AURORA_BACKEND_GRPC_ADDR", "127.0.0.1:8443"),
 		BackendWSURL:          env("AURORA_BACKEND_WS_URL", "ws://127.0.0.1:8080/ws/metrics"),
@@ -97,6 +99,9 @@ func (c Config) Validate() error {
 	}
 	if c.NodePollInterval <= 0 || c.VMPollInterval <= 0 {
 		return errors.New("poll intervals must be > 0")
+	}
+	if c.ShutdownTimeout <= 0 {
+		return errors.New("AURORA_SHUTDOWN_TIMEOUT must be > 0")
 	}
 	switch c.StreamMode {
 	case StreamModeGRPC, StreamModeWebSocket:

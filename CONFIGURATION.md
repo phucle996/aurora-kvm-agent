@@ -20,6 +20,7 @@ Agent đọc config từ environment variables.
 | `AURORA_NODE_POLL_INTERVAL` | `3s` |
 | `AURORA_HEALTH_INTERVAL` | `10s` |
 | `AURORA_RECONNECT_INTERVAL` | `4s` |
+| `AURORA_SHUTDOWN_TIMEOUT` | `20s` |
 | `AURORA_COLLECTOR_ERROR_BACKOFF` | `1500ms` |
 | `AURORA_RECONNECT_MAX_JITTER` | `900ms` |
 
