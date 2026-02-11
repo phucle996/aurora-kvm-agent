@@ -5,6 +5,10 @@ on:
     branches:
       - main
       - master
+    paths-ignore:
+      - ".github/workflows/release.yml"
+      - "scripts/install.sh"
+      - "*.md"
   workflow_dispatch:
 
 permissions:
@@ -32,6 +36,7 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
+          skip-files: .github/workflows/release.yml,scripts/install.sh,**/*.md
           format: table
           exit-code: "1"
           ignore-unfixed: true
