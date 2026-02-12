@@ -56,6 +56,24 @@ func (c *WebSocketClient) SendVMMetrics(ctx Context, metrics []model.VMMetrics) 
 	return c.sendEnvelope(ctx, model.Envelope{Type: model.MetricTypeVM, NodeID: frame.NodeID, Timestamp: frame.Timestamp, Payload: frame})
 }
 
+func (c *WebSocketClient) SendNodeInfoSync(_ Context, _ model.NodeInfoSync) error {
+	// Node info sync is shipped via unary gRPC and not required in websocket mode.
+	return nil
+}
+
+func (c *WebSocketClient) SendVMRuntimeMetrics(ctx Context, metrics []model.VMRuntimeMetrics) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+	frame := NewVMRuntimeFrame(metrics)
+	return c.sendEnvelope(ctx, model.Envelope{Type: model.MetricTypeVMRuntime, NodeID: frame.NodeID, Timestamp: frame.Timestamp, Payload: frame})
+}
+
+func (c *WebSocketClient) SendVMInfoSync(_ Context, _ model.VMInfoSync) error {
+	// VM info sync is shipped via unary gRPC and not required in websocket mode.
+	return nil
+}
+
 func (c *WebSocketClient) Close(ctx Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -374,6 +374,7 @@ ensure_env_file() {
 
   run_root bash -lc "cat > '${ENV_FILE}' <<'EOF'
 AURORA_NODE_ID=
+AURORA_AGENT_VERSION=
 AURORA_LIBVIRT_URI=qemu+unix:///system
 AURORA_AGENT_PROBE_ADDR=0.0.0.0:7443
 AURORA_STREAM_MODE=grpc
@@ -387,6 +388,16 @@ AURORA_NODE_POLL_INTERVAL=3s
 AURORA_VM_POLL_INTERVAL=1s
 AURORA_SHUTDOWN_TIMEOUT=20s
 EOF"
+}
+
+ensure_agent_version() {
+  local agent_version
+  agent_version="$(printf '%s' "${AURORA_AGENT_VERSION:-${VERSION:-latest}}" | xargs || true)"
+  if [ -z "$agent_version" ]; then
+    agent_version="latest"
+  fi
+  set_env_kv "$ENV_FILE" "AURORA_AGENT_VERSION" "$agent_version"
+  printf '%s' "$agent_version"
 }
 
 main() {
@@ -447,6 +458,9 @@ main() {
   local node_id
   node_id="$(ensure_node_id)"
   log "runtime node_id=${node_id}"
+  local agent_version
+  agent_version="$(ensure_agent_version)"
+  log "runtime agent_version=${agent_version}"
   apply_runtime_config
   install_systemd_unit
 

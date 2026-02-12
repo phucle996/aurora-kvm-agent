@@ -36,32 +36,52 @@ func (jsonCodec) Unmarshal(data []byte, v any) error {
 type GRPCClient struct {
 	mu sync.Mutex
 
-	logger       *slog.Logger
-	addr         string
-	tlsConfig    *tls.Config
-	token        string
-	nodeMethod   string
-	vmMethod     string
-	conn         *grpc.ClientConn
-	nodeStream   grpc.ClientStream
-	vmStream     grpc.ClientStream
-	dialTimeout  time.Duration
-	maxRetries   int
-	retryBackoff time.Duration
+	logger          *slog.Logger
+	addr            string
+	tlsConfig       *tls.Config
+	token           string
+	nodeMethod      string
+	staticMethod    string
+	nodeInfoMethod  string
+	vmInfoMethod    string
+	vmMethod        string
+	vmRuntimeMethod string
+	conn            *grpc.ClientConn
+	nodeStream      grpc.ClientStream
+	vmStream        grpc.ClientStream
+	vmRuntimeStream grpc.ClientStream
+	dialTimeout     time.Duration
+	maxRetries      int
+	retryBackoff    time.Duration
 }
 
-func NewGRPCClient(addr string, tlsCfg *tls.Config, token, nodeMethod, vmMethod string, logger *slog.Logger) *GRPCClient {
+func NewGRPCClient(
+	addr string,
+	tlsCfg *tls.Config,
+	token string,
+	nodeMethod string,
+	staticMethod string,
+	nodeInfoMethod string,
+	vmInfoMethod string,
+	vmMethod string,
+	vmRuntimeMethod string,
+	logger *slog.Logger,
+) *GRPCClient {
 	encoding.RegisterCodec(jsonCodec{})
 	return &GRPCClient{
-		logger:       logger,
-		addr:         addr,
-		tlsConfig:    tlsCfg,
-		token:        token,
-		nodeMethod:   nodeMethod,
-		vmMethod:     vmMethod,
-		dialTimeout:  8 * time.Second,
-		maxRetries:   5,
-		retryBackoff: time.Second,
+		logger:          logger,
+		addr:            addr,
+		tlsConfig:       tlsCfg,
+		token:           token,
+		nodeMethod:      nodeMethod,
+		staticMethod:    staticMethod,
+		nodeInfoMethod:  nodeInfoMethod,
+		vmInfoMethod:    vmInfoMethod,
+		vmMethod:        vmMethod,
+		vmRuntimeMethod: vmRuntimeMethod,
+		dialTimeout:     8 * time.Second,
+		maxRetries:      5,
+		retryBackoff:    time.Second,
 	}
 }
 
@@ -82,6 +102,33 @@ func (c *GRPCClient) SendVMMetrics(ctx Context, metrics []model.VMMetrics) error
 	return c.sendVMFrameWithRetryLocked(ctx, frame)
 }
 
+func (c *GRPCClient) SendVMRuntimeMetrics(ctx Context, metrics []model.VMRuntimeMetrics) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+	if c.vmRuntimeMethod == "" {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	frame := NewVMRuntimeFrame(metrics)
+	return c.sendVMRuntimeFrameWithRetryLocked(ctx, frame)
+}
+
+func (c *GRPCClient) SendNodeInfoSync(ctx Context, info model.NodeInfoSync) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	frame := NewNodeInfoSyncFrame(info)
+	return c.sendNodeInfoWithRetryLocked(ctx, frame)
+}
+
+func (c *GRPCClient) SendVMInfoSync(ctx Context, info model.VMInfoSync) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	frame := NewVMInfoSyncFrame(info)
+	return c.sendVMInfoWithRetryLocked(ctx, frame)
+}
+
 func (c *GRPCClient) Close(ctx Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -92,6 +139,10 @@ func (c *GRPCClient) Close(ctx Context) error {
 	if c.vmStream != nil {
 		_ = c.vmStream.CloseSend()
 		c.vmStream = nil
+	}
+	if c.vmRuntimeStream != nil {
+		_ = c.vmRuntimeStream.CloseSend()
+		c.vmRuntimeStream = nil
 	}
 	if c.conn != nil {
 		err := c.conn.Close()
@@ -245,6 +296,180 @@ func (c *GRPCClient) sendVMFrameWithRetryLocked(ctx Context, frame VMFrame) erro
 	return fmt.Errorf("send vm frame failed after %d attempts: %w", maxRetries, lastErr)
 }
 
+func (c *GRPCClient) sendVMRuntimeFrameWithRetryLocked(ctx Context, frame VMRuntimeFrame) error {
+	var lastErr error
+	maxRetries := c.maxRetries
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if err := c.ensureConnLocked(ctx); err != nil {
+			lastErr = err
+			c.resetConnLocked()
+			if !c.waitRetryLocked(ctx, attempt, maxRetries) {
+				break
+			}
+			continue
+		}
+		if c.vmRuntimeStream == nil {
+			if err := c.openVMRuntimeStreamLocked(ctx); err != nil {
+				lastErr = err
+				c.resetConnLocked()
+				if !c.waitRetryLocked(ctx, attempt, maxRetries) {
+					break
+				}
+				continue
+			}
+		}
+		if err := c.vmRuntimeStream.SendMsg(frame); err == nil {
+			return nil
+		} else {
+			lastErr = fmt.Errorf("send vm runtime frame: %w", err)
+			c.logger.Warn(
+				"grpc vm-runtime send failed, resetting conn",
+				"addr",
+				c.addr,
+				"attempt",
+				attempt,
+				"max_attempts",
+				maxRetries,
+				"error",
+				err,
+			)
+			c.resetConnLocked()
+			if !c.waitRetryLocked(ctx, attempt, maxRetries) {
+				break
+			}
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("unknown stream error")
+	}
+	return fmt.Errorf("send vm runtime frame failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+func (c *GRPCClient) sendNodeInfoWithRetryLocked(ctx Context, frame NodeInfoSyncFrame) error {
+	var lastErr error
+	maxRetries := c.maxRetries
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if err := c.ensureConnLocked(ctx); err != nil {
+			lastErr = err
+			c.resetConnLocked()
+			if !c.waitRetryLocked(ctx, attempt, maxRetries) {
+				break
+			}
+			continue
+		}
+
+		streamCtx := c.decorateContext(ctx)
+		var ack struct {
+			NodeID         string `json:"node_id"`
+			AcceptedAtUnix int64  `json:"accepted_at_unix"`
+			Message        string `json:"message"`
+		}
+		method := c.nodeInfoMethod
+		if method == "" {
+			method = c.staticMethod
+		}
+		if method == "" {
+			return fmt.Errorf("grpc node info sync method is empty")
+		}
+		err := c.conn.Invoke(streamCtx, method, frame, &ack)
+		if err == nil {
+			return nil
+		}
+
+		lastErr = fmt.Errorf("send node info sync frame: %w", err)
+		c.logger.Warn(
+			"grpc node info sync failed, resetting conn",
+			"addr",
+			c.addr,
+			"attempt",
+			attempt,
+			"max_attempts",
+			maxRetries,
+			"error",
+			err,
+		)
+		if method == c.nodeInfoMethod && c.staticMethod != "" {
+			legacyFrame := NodeStaticFrame{
+				NodeID:    frame.NodeID,
+				Timestamp: frame.Timestamp,
+				Metrics:   frame.Info,
+			}
+			if legacyErr := c.conn.Invoke(streamCtx, c.staticMethod, legacyFrame, &ack); legacyErr == nil {
+				c.logger.Warn("grpc node info fallback to legacy static rpc succeeded", "addr", c.addr, "legacy_method", c.staticMethod)
+				return nil
+			}
+		}
+		c.resetConnLocked()
+		if !c.waitRetryLocked(ctx, attempt, maxRetries) {
+			break
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("unknown stream error")
+	}
+	return fmt.Errorf("send node info sync frame failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+func (c *GRPCClient) sendVMInfoWithRetryLocked(ctx Context, frame VMInfoSyncFrame) error {
+	var lastErr error
+	maxRetries := c.maxRetries
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if err := c.ensureConnLocked(ctx); err != nil {
+			lastErr = err
+			c.resetConnLocked()
+			if !c.waitRetryLocked(ctx, attempt, maxRetries) {
+				break
+			}
+			continue
+		}
+
+		method := c.vmInfoMethod
+		if method == "" {
+			return fmt.Errorf("grpc vm info sync method is empty")
+		}
+		streamCtx := c.decorateContext(ctx)
+		var ack struct {
+			NodeID         string `json:"node_id"`
+			AcceptedAtUnix int64  `json:"accepted_at_unix"`
+			Message        string `json:"message"`
+		}
+		err := c.conn.Invoke(streamCtx, method, frame, &ack)
+		if err == nil {
+			return nil
+		}
+
+		lastErr = fmt.Errorf("send vm info sync frame: %w", err)
+		c.logger.Warn(
+			"grpc vm info sync failed, resetting conn",
+			"addr",
+			c.addr,
+			"attempt",
+			attempt,
+			"max_attempts",
+			maxRetries,
+			"error",
+			err,
+		)
+		c.resetConnLocked()
+		if !c.waitRetryLocked(ctx, attempt, maxRetries) {
+			break
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("unknown stream error")
+	}
+	return fmt.Errorf("send vm info sync frame failed after %d attempts: %w", maxRetries, lastErr)
+}
+
 func (c *GRPCClient) resetConnLocked() {
 	if c.nodeStream != nil {
 		_ = c.nodeStream.CloseSend()
@@ -253,6 +478,10 @@ func (c *GRPCClient) resetConnLocked() {
 	if c.vmStream != nil {
 		_ = c.vmStream.CloseSend()
 		c.vmStream = nil
+	}
+	if c.vmRuntimeStream != nil {
+		_ = c.vmRuntimeStream.CloseSend()
+		c.vmRuntimeStream = nil
 	}
 	if c.conn != nil {
 		_ = c.conn.Close()
@@ -302,6 +531,22 @@ func (c *GRPCClient) openVMStreamLocked(ctx Context) error {
 		return fmt.Errorf("open vm stream: %w", err)
 	}
 	c.vmStream = s
+	return nil
+}
+
+func (c *GRPCClient) openVMRuntimeStreamLocked(ctx Context) error {
+	if c.conn == nil {
+		return fmt.Errorf("grpc conn is nil")
+	}
+	if c.vmRuntimeMethod == "" {
+		return fmt.Errorf("grpc vm runtime stream method is empty")
+	}
+	streamCtx := c.decorateContext(ctx)
+	s, err := c.conn.NewStream(streamCtx, &grpc.StreamDesc{ClientStreams: true}, c.vmRuntimeMethod)
+	if err != nil {
+		return fmt.Errorf("open vm runtime stream: %w", err)
+	}
+	c.vmRuntimeStream = s
 	return nil
 }
 

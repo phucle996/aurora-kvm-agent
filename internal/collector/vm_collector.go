@@ -3,16 +3,16 @@ package collector
 import (
 	"context"
 
-	"aurora-kvm-agent/internal/libvirt"
+	libvirtvm "aurora-kvm-agent/internal/libvirt/metric/vm"
 	"aurora-kvm-agent/internal/model"
 )
 
 type VMCollector struct {
-	reader *libvirt.VMMetricsReader
+	reader *libvirtvm.VMMetricsReader
 	nodeID string
 }
 
-func NewVMCollector(reader *libvirt.VMMetricsReader, nodeID string) *VMCollector {
+func NewVMCollector(reader *libvirtvm.VMMetricsReader, nodeID string) *VMCollector {
 	return &VMCollector{reader: reader, nodeID: nodeID}
 }
 

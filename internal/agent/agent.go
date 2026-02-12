@@ -12,7 +12,9 @@ import (
 
 	"aurora-kvm-agent/internal/collector"
 	"aurora-kvm-agent/internal/config"
-	"aurora-kvm-agent/internal/libvirt"
+	libvirtmetric "aurora-kvm-agent/internal/libvirt/metric"
+	libvirtnode "aurora-kvm-agent/internal/libvirt/metric/node"
+	libvirtvm "aurora-kvm-agent/internal/libvirt/metric/vm"
 	"aurora-kvm-agent/internal/model"
 	"aurora-kvm-agent/internal/stream"
 )
@@ -20,10 +22,10 @@ import (
 type Agent struct {
 	cfg       config.Config
 	logger    *slog.Logger
-	conn      *libvirt.ConnManager
+	conn      *libvirtmetric.ConnManager
 	scheduler *collector.Scheduler
 	sink      stream.Sink
-	events    *libvirt.EventMonitor
+	events    *libvirtmetric.EventMonitor
 	health    *HealthStatus
 }
 
@@ -38,15 +40,28 @@ func New(cfg config.Config, logger *slog.Logger) (*Agent, error) {
 		return nil, fmt.Errorf("stream sink: %w", err)
 	}
 
-	conn := libvirt.NewConnManager(cfg.LibvirtURI, cfg.ReconnectInterval, cfg.MaxReconnectJitter, logger)
-	nodeReader := libvirt.NewNodeMetricsReader(conn, logger)
-	vmReader := libvirt.NewVMMetricsReader(conn, logger)
+	conn := libvirtmetric.NewConnManager(cfg.LibvirtURI, cfg.ReconnectInterval, cfg.MaxReconnectJitter, logger)
+	nodeReader := libvirtnode.NewNodeMetricsReader(conn, logger)
+	vmReader := libvirtvm.NewVMMetricsReader(conn, logger)
 	nodeCollector := collector.NewNodeCollector(nodeReader, cfg.NodeID, cfg.Hostname)
 	vmCollector := collector.NewVMCollector(vmReader, cfg.NodeID)
+	vmRuntimeCollector := collector.NewVMRuntimeCollector(vmReader, cfg.NodeID)
 
 	health := NewHealthStatus()
 	wrappedSink := &healthSink{sink: sink, health: health}
-	scheduler := collector.NewScheduler(logger, nodeCollector, vmCollector, wrappedSink, cfg.NodePollInterval, cfg.VMPollInterval, cfg.CollectorErrorBackoff)
+	scheduler := collector.NewScheduler(
+		logger,
+		nodeCollector,
+		vmCollector,
+		vmRuntimeCollector,
+		wrappedSink,
+		cfg.NodePollInterval,
+		cfg.InfoSyncInterval,
+		cfg.VMPollInterval,
+		cfg.VMRuntimePollInterval,
+		cfg.CollectorErrorBackoff,
+		cfg.AgentVersion,
+	)
 
 	return &Agent{
 		cfg:       cfg,
@@ -54,7 +69,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Agent, error) {
 		conn:      conn,
 		scheduler: scheduler,
 		sink:      wrappedSink,
-		events:    libvirt.NewEventMonitor(logger),
+		events:    libvirtmetric.NewEventMonitor(logger),
 		health:    health,
 	}, nil
 }
@@ -108,7 +123,7 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 func (a *Agent) runEventLoop(ctx context.Context) error {
-	events := make(chan libvirt.DomainEvent, 32)
+	events := make(chan libvirtmetric.DomainEvent, 32)
 	go a.events.Run(ctx, events)
 
 	for {
@@ -154,6 +169,16 @@ func (s *healthSink) SendNodeMetrics(ctx stream.Context, m model.NodeMetrics) er
 	return nil
 }
 
+func (s *healthSink) SendNodeInfoSync(ctx stream.Context, info model.NodeInfoSync) error {
+	err := s.sink.SendNodeInfoSync(ctx, info)
+	if err != nil {
+		s.health.SetStreamConnected(false)
+		return err
+	}
+	s.health.SetStreamConnected(true)
+	return nil
+}
+
 func (s *healthSink) SendVMMetrics(ctx stream.Context, metrics []model.VMMetrics) error {
 	err := s.sink.SendVMMetrics(ctx, metrics)
 	if err != nil {
@@ -164,6 +189,29 @@ func (s *healthSink) SendVMMetrics(ctx stream.Context, metrics []model.VMMetrics
 	if len(metrics) > 0 {
 		s.health.MarkVMSample(metrics[0].Timestamp)
 	}
+	return nil
+}
+
+func (s *healthSink) SendVMRuntimeMetrics(ctx stream.Context, metrics []model.VMRuntimeMetrics) error {
+	err := s.sink.SendVMRuntimeMetrics(ctx, metrics)
+	if err != nil {
+		s.health.SetStreamConnected(false)
+		return err
+	}
+	s.health.SetStreamConnected(true)
+	if len(metrics) > 0 {
+		s.health.MarkVMSample(metrics[0].TS)
+	}
+	return nil
+}
+
+func (s *healthSink) SendVMInfoSync(ctx stream.Context, info model.VMInfoSync) error {
+	err := s.sink.SendVMInfoSync(ctx, info)
+	if err != nil {
+		s.health.SetStreamConnected(false)
+		return err
+	}
+	s.health.SetStreamConnected(true)
 	return nil
 }
 

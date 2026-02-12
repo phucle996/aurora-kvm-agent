@@ -5,8 +5,9 @@ import "time"
 type MetricType string
 
 const (
-	MetricTypeNode MetricType = "node_metrics"
-	MetricTypeVM   MetricType = "vm_metrics"
+	MetricTypeNode      MetricType = "node_metrics"
+	MetricTypeVM        MetricType = "vm_metrics"
+	MetricTypeVMRuntime MetricType = "vm_runtime_metrics"
 )
 
 // Envelope is transport-agnostic framing for stream payloads.

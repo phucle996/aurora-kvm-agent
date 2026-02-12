@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package aurora.metrics.v1;
+
+option go_package = "aurora-kvm-agent/proto/metricsv1";
+
+message VMInfo {
+  string node_id = 1;
+  string vm_id = 2;
+  string vm_name = 3;
+  string state = 4;
+  uint64 vcpu_count = 5;
+  uint64 ram_total_bytes = 6;
+  uint64 disk_count = 7;
+  uint64 gpu_count = 8;
+}
+
+message VMInfoSync {
+  string node_id = 1;
+  int64 timestamp_unix = 2;
+  string sync_mode = 3; // full|delta
+  string reason = 4;
+  repeated VMInfo upserts = 5;
+  repeated string removed_vm_ids = 6;
+}
+
+message AgentVersionRequest {
+  string node_id = 1;
+}
+
+message AgentVersionResponse {
+  string node_id = 1;
+  string agent_version = 2;
+  string stream_mode = 3;
+  string probe_listen_addr = 4;
+  int64 checked_at_unix = 5;
+}
+
+message AgentCreateVMRequest {
+  string node_id = 1;
+  string vm_name = 2;
+  uint32 vcpu_count = 3;
+  uint64 ram_mb = 4;
+  uint64 disk_size_gb = 5;
+  string disk_path = 6;
+  string network_name = 7;
+  bool autostart = 8;
+  bool start_now = 9;
+}
+
+message AgentUpdateVMRequest {
+  string node_id = 1;
+  string vm_name = 2;
+  uint32 vcpu_count = 3;
+  uint64 ram_mb = 4;
+  bool autostart = 5;
+}
+
+message AgentDeleteVMRequest {
+  string node_id = 1;
+  string vm_name = 2;
+  bool force = 3;
+  bool remove_disk = 4;
+  int32 shutdown_timeout_s = 5;
+}
+
+message AgentMigrateVMRequest {
+  string node_id = 1;
+  string vm_name = 2;
+  string destination_uri = 3;
+  string migrate_uri = 4;
+  string destination_name = 5;
+  bool live = 6;
+  bool persistent = 7;
+  bool undefine_source = 8;
+  bool copy_storage_all = 9;
+  bool unsafe = 10;
+  bool compressed = 11;
+  bool allow_offline_fallback = 12;
+  uint64 bandwidth_mbps = 13;
+  int32 timeout_seconds = 14;
+}
+
+message AgentAdmissionReport {
+  uint64 total_vcpu = 1;
+  uint64 used_vcpu = 2;
+  uint64 remaining_vcpu = 3;
+  uint64 requested_vcpu = 4;
+  uint64 total_ram_mb = 5;
+  uint64 used_ram_mb = 6;
+  uint64 remaining_ram_mb = 7;
+  uint64 requested_ram_mb = 8;
+  string storage_path = 9;
+  uint64 storage_free_bytes = 10;
+  uint64 storage_total_bytes = 11;
+  uint64 requested_disk_bytes = 12;
+}
+
+message AgentVMOperationResponse {
+  string node_id = 1;
+  string vm_name = 2;
+  bool ok = 3;
+  bool rejected = 4;
+  string message = 5;
+  AgentAdmissionReport admission = 6;
+}

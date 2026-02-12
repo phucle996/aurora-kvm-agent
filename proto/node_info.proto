@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package aurora.metrics.v1;
+
+option go_package = "aurora-kvm-agent/proto/metricsv1";
+
+message NodeCPUStaticInfo {
+  string cpu_model = 1;
+  string cpu_vendor = 2;
+  string cpu_cache_l1 = 3;
+  string cpu_cache_l2 = 4;
+  string cpu_cache_l3 = 5;
+  string cpu_architecture = 6;
+  string cpu_virtualization_support = 7;
+  uint64 cpu_base_mhz = 8;
+  uint64 cpu_burst_mhz = 9;
+}
+
+message NodeRAMStickStaticInfo {
+  string slot = 1;
+  string model = 2;
+  string serial = 3;
+  string manufacturer = 4;
+}
+
+message NodeDiskStaticInfo {
+  string name = 1;
+  string model = 2;
+  string serial = 3;
+  string filesystem = 4;
+  string mountpoint = 5;
+}
+
+message NodeNetIfStaticInfo {
+  string name = 1;
+  string mac_address = 2;
+  string driver = 3;
+  string pci_address = 4;
+}
+
+message NodeGPUStaticInfo {
+  uint64 index = 1;
+  string vendor = 2;
+  string model = 3;
+  string uuid = 4;
+}
+
+message NodeStaticMetrics {
+  string node_id = 1;
+  string hostname = 2;
+  int64 timestamp_unix = 3;
+  NodeCPUStaticInfo cpu = 4;
+  repeated NodeRAMStickStaticInfo ram_sticks = 5;
+  repeated NodeDiskStaticInfo disks = 6;
+  repeated NodeNetIfStaticInfo netifs = 7;
+  repeated NodeGPUStaticInfo gpus = 8;
+}
+
+message NodeStaticMetricsFrame {
+  string node_id = 1;
+  int64 timestamp_unix = 2;
+  NodeStaticMetrics metrics = 3;
+}
+
+message NodeInfoSync {
+  string node_id = 1;
+  int64 timestamp_unix = 2;
+  string sync_mode = 3; // full|delta
+  string reason = 4;
+  NodeStaticMetrics info = 5;
+  string agent_version = 6;
+  repeated string capabilities = 7;
+}

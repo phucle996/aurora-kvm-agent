@@ -1,0 +1,344 @@
+syntax = "proto3";
+
+package aurora.metrics.v1;
+
+option go_package = "aurora-kvm-agent/proto/metricsv1";
+
+message NodeDiskMetric {
+  string name = 1;
+  string model = 2;
+  string serial = 3;
+  string type = 4;
+  uint64 size_bytes = 5;
+  string mountpoint = 6;
+  string filesystem = 7;
+
+  double read_bytes_per_sec = 8;
+  double write_bytes_per_sec = 9;
+  double read_iops = 10;
+  double write_iops = 11;
+
+  double read_latency_ms = 12;
+  double write_latency_ms = 13;
+
+  uint64 queue_length = 14;
+  double util_percent = 15;
+
+  uint64 read_bytes_total = 16;
+  uint64 write_bytes_total = 17;
+  uint64 read_ops_total = 18;
+  uint64 write_ops_total = 19;
+
+  uint64 fs_total_bytes = 20;
+  uint64 fs_used_bytes = 21;
+  uint64 fs_free_bytes = 22;
+  double fs_usage_percent = 23;
+
+  uint64 inode_total = 24;
+  uint64 inode_used = 25;
+  uint64 inode_free = 26;
+}
+
+message NodeNetIfMetric {
+  string name = 1;
+  string mac_address = 2;
+  uint64 mtu = 3;
+  uint64 speed_mbps = 4;
+  string duplex = 5;
+  string operstate = 6;
+  string type = 7;
+  string driver = 8;
+  string pci_address = 9;
+  bool link_up = 10;
+
+  double rx_bytes_per_sec = 11;
+  double tx_bytes_per_sec = 12;
+  double rx_packets_per_sec = 13;
+  double tx_packets_per_sec = 14;
+
+  uint64 rx_bytes_total = 15;
+  uint64 tx_bytes_total = 16;
+  uint64 rx_packets_total = 17;
+  uint64 tx_packets_total = 18;
+
+  uint64 rx_errors = 19;
+  uint64 tx_errors = 20;
+  uint64 rx_dropped = 21;
+  uint64 tx_dropped = 22;
+  uint64 rx_overruns = 23;
+  uint64 tx_overruns = 24;
+  uint64 rx_fifo_errors = 25;
+  uint64 tx_fifo_errors = 26;
+  uint64 collisions = 27;
+  uint64 carrier_errors = 28;
+
+  uint64 rx_queue_length = 29;
+  uint64 tx_queue_length = 30;
+
+  uint64 rx_compressed = 31;
+  uint64 tx_compressed = 32;
+  uint64 multicast = 33;
+  uint64 broadcast = 34;
+
+  double bandwidth_util_percent = 35;
+  double rx_latency_ms = 36;
+  double tx_latency_ms = 37;
+
+  string bridge = 38;
+  uint64 vlan_id = 39;
+  string bond_master = 40;
+  string bond_mode = 41;
+  repeated string bond_slaves = 42;
+
+  uint64 tcp_connections_total = 43;
+  uint64 tcp_established = 44;
+  uint64 tcp_syn_sent = 45;
+  uint64 tcp_syn_recv = 46;
+  uint64 tcp_fin_wait1 = 47;
+  uint64 tcp_fin_wait2 = 48;
+  uint64 tcp_time_wait = 49;
+  uint64 tcp_close = 50;
+  uint64 tcp_close_wait = 51;
+  uint64 tcp_last_ack = 52;
+  uint64 tcp_listen = 53;
+  uint64 tcp_closing = 54;
+
+  uint64 udp_in_datagrams = 55;
+  uint64 udp_out_datagrams = 56;
+  uint64 udp_in_errors = 57;
+  uint64 udp_no_ports = 58;
+
+  uint64 ip_in_packets = 59;
+  uint64 ip_out_packets = 60;
+  uint64 ip_in_errors = 61;
+  uint64 ip_out_errors = 62;
+  uint64 ip_forwarded = 63;
+
+  uint64 drops_total = 64;
+  uint64 errors_total = 65;
+}
+
+message NodeGPUProcessMetric {
+  uint64 pid = 1;
+  string name = 2;
+  uint64 memory_used_bytes = 3;
+  string username = 4;
+  string container_id = 5;
+}
+
+message NodeGPUMetric {
+  uint64 index = 1;
+  string uuid = 2;
+  string name = 3;
+  string vendor = 4;
+  string model = 5;
+  string driver_version = 6;
+  string vbios_version = 7;
+  string pci_address = 8;
+  string bus_id = 9;
+  string serial = 10;
+  string architecture = 11;
+  string compute_capability = 12;
+
+  double gpu_util_percent = 13;
+  double memory_util_percent = 14;
+  uint64 memory_total_bytes = 15;
+  uint64 memory_used_bytes = 16;
+  uint64 memory_free_bytes = 17;
+  uint64 memory_reserved_bytes = 18;
+
+  double power_usage_watts = 19;
+  double power_limit_watts = 20;
+  double energy_consumption_joules = 21;
+  double temperature_celsius = 22;
+  double temperature_memory_celsius = 23;
+  double fan_speed_percent = 24;
+
+  uint64 clock_core_mhz = 25;
+  uint64 clock_mem_mhz = 26;
+  double pcie_rx_bytes_per_sec = 27;
+  double pcie_tx_bytes_per_sec = 28;
+  uint64 pcie_link_gen = 29;
+  uint64 pcie_link_width = 30;
+  double pcie_bandwidth_util_percent = 31;
+
+  uint64 process_count = 32;
+  repeated NodeGPUProcessMetric processes = 33;
+
+  string virtualization_mode = 34;
+  string compute_mode = 35;
+  string persistence_mode = 36;
+  string throttle_reasons = 37;
+  bool thermal_throttle = 38;
+  bool power_throttle = 39;
+  bool clock_throttle = 40;
+
+  double sm_util_percent = 41;
+  double tensor_util_percent = 42;
+  double encoder_util_percent = 43;
+  double decoder_util_percent = 44;
+  uint64 clock_sm_mhz = 45;
+  uint64 clock_video_mhz = 46;
+  uint64 bar1_memory_bytes = 47;
+  bool ecc_enabled = 48;
+  uint64 ecc_errors_corrected = 49;
+  uint64 ecc_errors_uncorrected = 50;
+
+  bool mig_enabled = 51;
+  uint64 mig_instances = 52;
+  uint64 mig_memory_bytes = 53;
+  uint64 mig_compute_instances = 54;
+  repeated string mig_profiles = 55;
+
+  double nvlink_rx_bytes_per_sec = 56;
+  double nvlink_tx_bytes_per_sec = 57;
+  uint64 nvlink_link_count = 58;
+  double utilization_gpu_avg_1m = 59;
+  double utilization_gpu_avg_5m = 60;
+  double utilization_gpu_avg_15m = 61;
+  double power_draw_max_watts = 62;
+  double power_draw_min_watts = 63;
+  string clocks_throttle_reasons = 64;
+
+  double gpu_busy_percent = 65;
+  double memory_busy_percent = 66;
+  double temperature_edge_celsius = 67;
+  double temperature_hotspot_celsius = 68;
+  double power_cap_watts = 69;
+  double power_average_watts = 70;
+  uint64 clock_soc_mhz = 71;
+  uint64 clock_memory_mhz = 72;
+  uint64 pcie_replay_count = 73;
+  double pcie_bandwidth_mbps = 74;
+  uint64 ras_errors_corrected = 75;
+  uint64 ras_errors_uncorrected = 76;
+  string compute_partition = 77;
+  string memory_partition = 78;
+  string gfx_version = 79;
+  string asic_name = 80;
+}
+
+message NodeMetrics {
+  string node_id = 1;
+  string hostname = 2;
+  int64 timestamp_unix = 3;
+  double cpu_usage_pct = 4;
+  uint64 cpu_cores = 5;
+  uint64 cpu_mhz = 6;
+  double load_1 = 7;
+  double load_5 = 8;
+  double load_15 = 9;
+  uint64 ram_used_bytes = 10;
+  uint64 ram_total_bytes = 11;
+  uint64 disk_read_bytes = 12;
+  uint64 disk_write_bytes = 13;
+  uint64 net_rx_bytes = 14;
+  uint64 net_tx_bytes = 15;
+  string cpu_model = 16;
+  string cpu_vendor = 17;
+  uint64 cpu_base_mhz = 18;
+  uint64 cpu_burst_mhz = 19;
+  uint64 gpu_count = 20;
+  string gpu_model = 21;
+  double gpu_usage_pct = 22;
+  uint64 gpu_memory_used_bytes = 23;
+  uint64 gpu_memory_total_bytes = 24;
+  uint64 process_count = 25;
+  uint64 thread_count = 26;
+
+  double cpu_usage_total_percent = 27;
+  double cpu_user_percent = 28;
+  double cpu_system_percent = 29;
+  double cpu_idle_percent = 30;
+  double cpu_iowait_percent = 31;
+  double cpu_steal_percent = 32;
+  double cpu_irq_percent = 33;
+  double cpu_softirq_percent = 34;
+  double cpu_nice_percent = 35;
+
+  uint64 cpu_freq_current_mhz = 36;
+  uint64 cpu_freq_min_mhz = 37;
+  uint64 cpu_freq_max_mhz = 38;
+
+  uint64 cpu_core_count_physical = 39;
+  uint64 cpu_thread_count_logical = 40;
+  uint64 cpu_socket_count = 41;
+  repeated double cpu_core_usage_percent = 42;
+  uint64 run_queue_length = 43;
+
+  uint64 process_total = 44;
+  uint64 thread_total = 45;
+  double context_switches_per_sec = 46;
+  double interrupts_per_sec = 47;
+
+  double cpu_temperature_celsius = 48;
+  string cpu_model_name = 49;
+  string cpu_architecture = 50;
+  string cpu_virtualization_support = 51;
+  string cpu_cache_l1 = 52;
+  string cpu_cache_l2 = 53;
+  string cpu_cache_l3 = 54;
+
+  uint64 ram_free_bytes = 55;
+  uint64 ram_available_bytes = 56;
+  uint64 ram_cached_bytes = 57;
+  uint64 ram_buffer_bytes = 58;
+  uint64 ram_shared_bytes = 59;
+  uint64 ram_slab_bytes = 60;
+  uint64 ram_active_bytes = 61;
+  uint64 ram_inactive_bytes = 62;
+  uint64 ram_dirty_bytes = 63;
+  uint64 ram_writeback_bytes = 64;
+  double ram_usage_percent = 65;
+  double ram_available_percent = 66;
+
+  uint64 swap_total_bytes = 67;
+  uint64 swap_used_bytes = 68;
+  uint64 swap_free_bytes = 69;
+  double swap_usage_percent = 70;
+  double swap_in_bytes_per_sec = 71;
+  double swap_out_bytes_per_sec = 72;
+
+  double page_faults_per_sec = 73;
+  double major_page_faults_per_sec = 74;
+  uint64 oom_kill_count = 75;
+
+  uint64 ram_stick_count = 76;
+  repeated string ram_stick_slot = 77;
+  repeated uint64 ram_stick_size_bytes = 78;
+  repeated uint64 ram_stick_speed_mhz = 79;
+  repeated string ram_stick_type = 80;
+  repeated string ram_stick_model = 81;
+  repeated string ram_stick_manufacturer = 82;
+  repeated string ram_stick_part_number = 83;
+  repeated string ram_stick_serial = 84;
+  uint64 ram_total_physical_bytes = 85;
+  bool ram_ecc_enabled = 86;
+
+  uint64 hugepages_total = 87;
+  uint64 hugepages_used = 88;
+  uint64 hugepages_free = 89;
+  double memory_pressure_percent = 90;
+  repeated NodeDiskMetric disks = 91;
+  repeated NodeNetIfMetric netifs = 92;
+  double net_total_rx_bytes_per_sec = 93;
+  double net_total_tx_bytes_per_sec = 94;
+  double net_total_rx_packets_per_sec = 95;
+  double net_total_tx_packets_per_sec = 96;
+  uint64 net_total_connections = 97;
+  uint64 net_conntrack_count = 98;
+  uint64 net_conntrack_max = 99;
+
+  repeated NodeGPUMetric gpus = 300;
+  uint64 gpu_total_count = 301;
+  uint64 gpu_total_memory_bytes = 302;
+  uint64 gpu_total_memory_used_bytes = 303;
+  double gpu_total_util_percent = 304;
+  double gpu_total_power_watts = 305;
+}
+
+message NodeMetricsFrame {
+  string node_id = 1;
+  int64 timestamp_unix = 2;
+  NodeMetrics metrics = 3;
+}

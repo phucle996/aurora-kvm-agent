@@ -1,4 +1,4 @@
-package libvirt
+package metric
 
 import (
 	"context"
