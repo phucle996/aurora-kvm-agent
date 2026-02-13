@@ -16,7 +16,7 @@ type StreamMode string
 const (
 	StreamModeGRPC      StreamMode = "grpc"
 	StreamModeWebSocket StreamMode = "websocket"
-	HardcodedVersion    string     = "V0.1"
+	HardcodedVersion    string     = "V0.2"
 )
 
 type Config struct {
@@ -68,7 +68,7 @@ func Load() (Config, error) {
 		Hostname:                  hostname,
 		LibvirtURI:                env("AURORA_LIBVIRT_URI", "qemu+unix:///system"),
 		ProbeListenAddr:           env("AURORA_AGENT_PROBE_ADDR", "0.0.0.0:7443"),
-		NodePollInterval:          envDuration("AURORA_NODE_POLL_INTERVAL", 3*time.Second),
+		NodePollInterval:          envDuration("AURORA_NODE_POLL_INTERVAL", 1*time.Second),
 		InfoSyncInterval:          envDuration("AURORA_INFO_SYNC_INTERVAL", envDuration("AURORA_NODE_STATIC_INTERVAL", 10*time.Minute)),
 		VMPollInterval:            envDuration("AURORA_VM_POLL_INTERVAL", 1*time.Second),
 		VMRuntimePollInterval:     envDuration("AURORA_VM_RUNTIME_POLL_INTERVAL", 5*time.Second),
