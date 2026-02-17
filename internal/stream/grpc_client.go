@@ -41,8 +41,6 @@ type GRPCClient struct {
 	tlsConfig       *tls.Config
 	token           string
 	nodeMethod      string
-	staticMethod    string
-	nodeInfoMethod  string
 	vmInfoMethod    string
 	vmMethod        string
 	vmRuntimeMethod string
@@ -60,8 +58,6 @@ func NewGRPCClient(
 	tlsCfg *tls.Config,
 	token string,
 	nodeMethod string,
-	staticMethod string,
-	nodeInfoMethod string,
 	vmInfoMethod string,
 	vmMethod string,
 	vmRuntimeMethod string,
@@ -74,8 +70,6 @@ func NewGRPCClient(
 		tlsConfig:       tlsCfg,
 		token:           token,
 		nodeMethod:      nodeMethod,
-		staticMethod:    staticMethod,
-		nodeInfoMethod:  nodeInfoMethod,
 		vmInfoMethod:    vmInfoMethod,
 		vmMethod:        vmMethod,
 		vmRuntimeMethod: vmRuntimeMethod,
@@ -113,13 +107,6 @@ func (c *GRPCClient) SendVMRuntimeMetrics(ctx Context, metrics []model.VMRuntime
 	defer c.mu.Unlock()
 	frame := NewVMRuntimeFrame(metrics)
 	return c.sendVMRuntimeFrameWithRetryLocked(ctx, frame)
-}
-
-func (c *GRPCClient) SendNodeInfoSync(ctx Context, info model.NodeInfoSync) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	frame := NewNodeInfoSyncFrame(info)
-	return c.sendNodeInfoWithRetryLocked(ctx, frame)
 }
 
 func (c *GRPCClient) SendVMInfoSync(ctx Context, info model.VMInfoSync) error {
@@ -346,74 +333,6 @@ func (c *GRPCClient) sendVMRuntimeFrameWithRetryLocked(ctx Context, frame VMRunt
 		lastErr = fmt.Errorf("unknown stream error")
 	}
 	return fmt.Errorf("send vm runtime frame failed after %d attempts: %w", maxRetries, lastErr)
-}
-
-func (c *GRPCClient) sendNodeInfoWithRetryLocked(ctx Context, frame NodeInfoSyncFrame) error {
-	var lastErr error
-	maxRetries := c.maxRetries
-	if maxRetries <= 0 {
-		maxRetries = 1
-	}
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if err := c.ensureConnLocked(ctx); err != nil {
-			lastErr = err
-			c.resetConnLocked()
-			if !c.waitRetryLocked(ctx, attempt, maxRetries) {
-				break
-			}
-			continue
-		}
-
-		streamCtx := c.decorateContext(ctx)
-		var ack struct {
-			NodeID         string `json:"node_id"`
-			AcceptedAtUnix int64  `json:"accepted_at_unix"`
-			Message        string `json:"message"`
-		}
-		method := c.nodeInfoMethod
-		if method == "" {
-			method = c.staticMethod
-		}
-		if method == "" {
-			return fmt.Errorf("grpc node info sync method is empty")
-		}
-		err := c.conn.Invoke(streamCtx, method, frame, &ack)
-		if err == nil {
-			return nil
-		}
-
-		lastErr = fmt.Errorf("send node info sync frame: %w", err)
-		c.logger.Warn(
-			"grpc node info sync failed, resetting conn",
-			"addr",
-			c.addr,
-			"attempt",
-			attempt,
-			"max_attempts",
-			maxRetries,
-			"error",
-			err,
-		)
-		if method == c.nodeInfoMethod && c.staticMethod != "" {
-			legacyFrame := NodeStaticFrame{
-				NodeID:    frame.NodeID,
-				Timestamp: frame.Timestamp,
-				Metrics:   frame.Info,
-			}
-			if legacyErr := c.conn.Invoke(streamCtx, c.staticMethod, legacyFrame, &ack); legacyErr == nil {
-				c.logger.Warn("grpc node info fallback to legacy static rpc succeeded", "addr", c.addr, "legacy_method", c.staticMethod)
-				return nil
-			}
-		}
-		c.resetConnLocked()
-		if !c.waitRetryLocked(ctx, attempt, maxRetries) {
-			break
-		}
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("unknown stream error")
-	}
-	return fmt.Errorf("send node info sync frame failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 func (c *GRPCClient) sendVMInfoWithRetryLocked(ctx Context, frame VMInfoSyncFrame) error {

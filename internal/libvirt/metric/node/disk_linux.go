@@ -35,11 +35,11 @@ type diskMountUsage struct {
 	InodeFree   uint64
 }
 
-func (r *NodeMetricsReader) collectNodeDiskMetrics(now time.Time) ([]model.NodeDiskMetrics, uint64, uint64) {
+func (r *NodeMetricsReader) collectNodeDiskMetrics(now time.Time, nodeID string) ([]model.NodeDiskMetricLite, diskAggregateLite) {
 	current, err := readDiskStatSnapshots()
 	if err != nil {
 		r.logger.Warn("read per-disk stats failed", "error", err)
-		return nil, 0, 0
+		return []model.NodeDiskMetricLite{}, diskAggregateLite{}
 	}
 
 	mountUsages := readDiskMountUsages()
@@ -49,84 +49,76 @@ func (r *NodeMetricsReader) collectNodeDiskMetrics(now time.Time) ([]model.NodeD
 	}
 	sort.Strings(names)
 
-	var (
-		prevByName map[string]diskStatSnapshot
-		elapsedSec float64
-	)
-	r.mu.Lock()
-	if r.hasPrevDiskStats {
-		prevByName = r.prevDiskStats
-		elapsedSec = now.Sub(r.prevDiskAt).Seconds()
-	}
-	r.prevDiskStats = current
-	r.prevDiskAt = now
-	r.hasPrevDiskStats = true
-	r.mu.Unlock()
-
-	disks := make([]model.NodeDiskMetrics, 0, len(names))
-	var totalReadBytes uint64
-	var totalWriteBytes uint64
+	disks := make([]model.NodeDiskMetricLite, 0, len(names))
+	agg := diskAggregateLite{}
+	utilCount := 0
 
 	for _, name := range names {
 		cur := current[name]
 		sysInfo := readDiskSysInfo(name)
 		mountUsage := mountUsages[name]
 
-		disk := model.NodeDiskMetrics{
-			Name:            name,
-			Model:           sysInfo.Model,
-			Serial:          sysInfo.Serial,
-			Type:            sysInfo.Type,
-			SizeBytes:       sysInfo.SizeBytes,
-			QueueLength:     cur.IOInProgress,
-			ReadBytesTotal:  cur.SectorsRead * 512,
-			WriteBytesTotal: cur.SectorsWritten * 512,
-			ReadOpsTotal:    cur.ReadsCompleted,
-			WriteOpsTotal:   cur.WritesCompleted,
+		disk := model.NodeDiskMetricLite{
+			NodeID:        nodeID,
+			DiskName:      name,
+			TimestampUnix: now.Unix(),
+			SizeBytes:     sysInfo.SizeBytes,
 		}
 
 		if mountUsage != nil {
 			disk.Mountpoint = strings.Join(mountUsage.Mountpoints, ",")
-			disk.Filesystem = strings.Join(mountUsage.Filesystems, ",")
-			disk.FSTotalBytes = mountUsage.FSTotal
-			disk.FSUsedBytes = mountUsage.FSUsed
-			disk.FSFreeBytes = mountUsage.FSFree
 			disk.FSUsagePercent = percentOf(mountUsage.FSUsed, mountUsage.FSTotal)
-			disk.InodeTotal = mountUsage.InodeTotal
-			disk.InodeUsed = mountUsage.InodeUsed
-			disk.InodeFree = mountUsage.InodeFree
 		}
 
-		if elapsedSec > 0 && prevByName != nil {
-			if prev, ok := prevByName[name]; ok {
-				readBytesDelta := deltaCounter(cur.SectorsRead, prev.SectorsRead) * 512
-				writeBytesDelta := deltaCounter(cur.SectorsWritten, prev.SectorsWritten) * 512
-				readOpsDelta := deltaCounter(cur.ReadsCompleted, prev.ReadsCompleted)
-				writeOpsDelta := deltaCounter(cur.WritesCompleted, prev.WritesCompleted)
-				readTimeDelta := deltaCounter(cur.TimeReadingMs, prev.TimeReadingMs)
-				writeTimeDelta := deltaCounter(cur.TimeWritingMs, prev.TimeWritingMs)
-				busyMsDelta := deltaCounter(cur.TimeDoingIOms, prev.TimeDoingIOms)
+		if delta, sec, ok := r.delta.ObserveCounter("disk:"+name+":sectors_read", now, cur.SectorsRead); ok && sec > 0 {
+			readBps := float64(delta*512) / sec
+			disk.ReadMBS = readBps / (1024 * 1024)
+		}
+		if delta, sec, ok := r.delta.ObserveCounter("disk:"+name+":sectors_written", now, cur.SectorsWritten); ok && sec > 0 {
+			writeBps := float64(delta*512) / sec
+			disk.WriteMBS = writeBps / (1024 * 1024)
+		}
+		disk.TotalMBS = disk.ReadMBS + disk.WriteMBS
 
-				disk.ReadBytesPerSec = float64(readBytesDelta) / elapsedSec
-				disk.WriteBytesPerSec = float64(writeBytesDelta) / elapsedSec
-				disk.ReadIOPS = float64(readOpsDelta) / elapsedSec
-				disk.WriteIOPS = float64(writeOpsDelta) / elapsedSec
-				if readOpsDelta > 0 {
-					disk.ReadLatencyMs = float64(readTimeDelta) / float64(readOpsDelta)
-				}
-				if writeOpsDelta > 0 {
-					disk.WriteLatencyMs = float64(writeTimeDelta) / float64(writeOpsDelta)
-				}
-				disk.UtilPercent = clampPercent(float64(busyMsDelta) / (elapsedSec * 10))
-			}
+		if delta, sec, ok := r.delta.ObserveCounter("disk:"+name+":reads_completed", now, cur.ReadsCompleted); ok && sec > 0 {
+			disk.ReadIOPS = float64(delta) / sec
+		}
+		if delta, sec, ok := r.delta.ObserveCounter("disk:"+name+":writes_completed", now, cur.WritesCompleted); ok && sec > 0 {
+			disk.WriteIOPS = float64(delta) / sec
+		}
+		disk.TotalIOPS = disk.ReadIOPS + disk.WriteIOPS
+
+		readOpsDelta, _, readOpsOK := r.delta.ObserveCounter("disk:"+name+":reads_for_latency", now, cur.ReadsCompleted)
+		writeOpsDelta, _, writeOpsOK := r.delta.ObserveCounter("disk:"+name+":writes_for_latency", now, cur.WritesCompleted)
+		readTimeDelta, _, readTimeOK := r.delta.ObserveCounter("disk:"+name+":read_time_ms", now, cur.TimeReadingMs)
+		writeTimeDelta, _, writeTimeOK := r.delta.ObserveCounter("disk:"+name+":write_time_ms", now, cur.TimeWritingMs)
+
+		if readOpsOK && readTimeOK && readOpsDelta > 0 {
+			disk.ReadLatencyMs = float64(readTimeDelta) / float64(readOpsDelta)
+		}
+		if writeOpsOK && writeTimeOK && writeOpsDelta > 0 {
+			disk.WriteLatencyMs = float64(writeTimeDelta) / float64(writeOpsDelta)
 		}
 
-		totalReadBytes += disk.ReadBytesTotal
-		totalWriteBytes += disk.WriteBytesTotal
+		if busyMsDelta, sec, ok := r.delta.ObserveCounter("disk:"+name+":busy_ms", now, cur.TimeDoingIOms); ok && sec > 0 {
+			disk.UtilPercent = clampPercent(float64(busyMsDelta) / (sec * 10))
+		}
+
+		agg.ReadMBS += disk.ReadMBS
+		agg.WriteMBS += disk.WriteMBS
+		agg.IOPS += disk.TotalIOPS
+		if disk.UtilPercent > 0 {
+			agg.UtilPercent += disk.UtilPercent
+			utilCount++
+		}
 		disks = append(disks, disk)
 	}
 
-	return disks, totalReadBytes, totalWriteBytes
+	agg.TotalMBS = agg.ReadMBS + agg.WriteMBS
+	if utilCount > 0 {
+		agg.UtilPercent = agg.UtilPercent / float64(utilCount)
+	}
+	return disks, agg
 }
 
 func readDiskStatSnapshots() (map[string]diskStatSnapshot, error) {

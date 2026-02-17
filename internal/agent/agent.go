@@ -29,6 +29,13 @@ type Agent struct {
 	health    *HealthStatus
 }
 
+const (
+	nodeLiteStreamInterval = 2 * time.Second
+	vmLiteStreamInterval   = 2 * time.Second
+	vmDetailStreamInterval = 5 * time.Second
+	vmInfoSyncInterval     = 10 * time.Minute
+)
+
 func New(cfg config.Config, logger *slog.Logger) (*Agent, error) {
 	tlsCfg, err := cfg.TLSConfig()
 	if err != nil {
@@ -55,10 +62,10 @@ func New(cfg config.Config, logger *slog.Logger) (*Agent, error) {
 		vmCollector,
 		vmRuntimeCollector,
 		wrappedSink,
-		cfg.NodePollInterval,
-		cfg.InfoSyncInterval,
-		cfg.VMPollInterval,
-		cfg.VMRuntimePollInterval,
+		nodeLiteStreamInterval,
+		vmInfoSyncInterval,
+		vmLiteStreamInterval,
+		vmDetailStreamInterval,
 		cfg.CollectorErrorBackoff,
 		cfg.AgentVersion,
 	)
@@ -75,7 +82,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Agent, error) {
 }
 
 func (a *Agent) Run(ctx context.Context) error {
-	a.logger.Info("starting aurora-kvm-agent", "node_id", a.cfg.NodeID, "libvirt_uri", a.cfg.LibvirtURI, "stream_mode", a.cfg.StreamMode)
+	a.logger.Info("starting aurora-kvm-agent", "node_id", a.cfg.NodeID, "libvirt_uri", a.cfg.LibvirtURI)
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
@@ -147,9 +154,6 @@ func BuildLogger(cfg config.Config) *slog.Logger {
 		level = slog.LevelError
 	}
 	hOpts := &slog.HandlerOptions{Level: level}
-	if cfg.LogJSON {
-		return slog.New(slog.NewJSONHandler(os.Stdout, hOpts))
-	}
 	return slog.New(slog.NewTextHandler(os.Stdout, hOpts))
 }
 
@@ -165,17 +169,9 @@ func (s *healthSink) SendNodeMetrics(ctx stream.Context, m model.NodeMetrics) er
 		return err
 	}
 	s.health.SetStreamConnected(true)
-	s.health.MarkNodeSample(m.Timestamp)
-	return nil
-}
-
-func (s *healthSink) SendNodeInfoSync(ctx stream.Context, info model.NodeInfoSync) error {
-	err := s.sink.SendNodeInfoSync(ctx, info)
-	if err != nil {
-		s.health.SetStreamConnected(false)
-		return err
+	if m.TimestampUnix > 0 {
+		s.health.MarkNodeSample(time.Unix(m.TimestampUnix, 0).UTC())
 	}
-	s.health.SetStreamConnected(true)
 	return nil
 }
 
@@ -186,8 +182,8 @@ func (s *healthSink) SendVMMetrics(ctx stream.Context, metrics []model.VMMetrics
 		return err
 	}
 	s.health.SetStreamConnected(true)
-	if len(metrics) > 0 {
-		s.health.MarkVMSample(metrics[0].Timestamp)
+	if len(metrics) > 0 && metrics[0].TimestampUnix > 0 {
+		s.health.MarkVMSample(time.Unix(metrics[0].TimestampUnix, 0).UTC())
 	}
 	return nil
 }
@@ -199,8 +195,8 @@ func (s *healthSink) SendVMRuntimeMetrics(ctx stream.Context, metrics []model.VM
 		return err
 	}
 	s.health.SetStreamConnected(true)
-	if len(metrics) > 0 {
-		s.health.MarkVMSample(metrics[0].TS)
+	if len(metrics) > 0 && metrics[0].TimestampUnix > 0 {
+		s.health.MarkVMSample(time.Unix(metrics[0].TimestampUnix, 0).UTC())
 	}
 	return nil
 }

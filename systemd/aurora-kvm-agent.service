@@ -1,5 +1,5 @@
 [Unit]
-Description=Aurora KVM Metrics Agent
+Description=Aurora VM Agent
 After=network-online.target libvirtd.service
 Wants=network-online.target
 

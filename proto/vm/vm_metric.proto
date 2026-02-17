@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+package aurora.metrics.v1;
+
+option go_package = "aurora-kvm-agent/proto/metricsv1";
+
+//////////////////////////////////////////////////////////////
+//////////////////////  L1: LITE METRICS  /////////////////////
+//////////////////////////////////////////////////////////////
+
+// dùng cho dashboard list VM
+message VMLiteMetrics {
+  string node_id = 1;
+  string vm_id = 2;
+  string vm_name = 3;
+  string state = 4;
+  int64 timestamp_unix = 5;
+
+  double cpu_usage_pct = 6;
+  uint64 vcpu_count = 7;
+
+  uint64 ram_used_bytes = 8;
+  uint64 ram_total_bytes = 9;
+
+  double net_rx_bytes_per_sec = 10;
+  double net_tx_bytes_per_sec = 11;
+}
+
+//////////////////////////////////////////////////////////////
+////////////////////  L2: RUNTIME DETAIL  /////////////////////
+//////////////////////////////////////////////////////////////
+
+// per-disk
+message VMRuntimeDiskMetric {
+  string name = 1;
+  double read_bytes_per_sec = 2;
+  double write_bytes_per_sec = 3;
+  double util_percent = 4;
+  double fs_usage_percent = 5;
+}
+
+// per-gpu
+message VMRuntimeGPUMetric {
+  uint32 gpu_index = 1;
+  string gpu_uuid = 2;
+  string gpu_model = 3;
+  double gpu_util_percent = 4;
+  uint64 memory_used_bytes = 5;
+  uint64 memory_total_bytes = 6;
+}
+
+// runtime metrics cho 1 VM
+message VMRuntimeMetrics {
+  string node_id = 1;
+  string vm_id = 2;
+  string vm_name = 3;
+  int64 timestamp_unix = 4;
+
+  // CPU
+  double cpu_usage_percent = 5;
+  double cpu_steal_percent = 6;
+  uint64 vcpu_count = 7;
+  double load_1 = 8;
+  double load_5 = 9;
+  double load_15 = 10;
+
+  // RAM
+  uint64 ram_total_bytes = 11;
+  uint64 ram_used_bytes = 12;
+  double ram_usage_percent = 13;
+  uint64 swap_used_bytes = 14;
+  double swap_usage_percent = 15;
+
+  // DISK TOTAL
+  double disk_read_bytes_per_sec = 16;
+  double disk_write_bytes_per_sec = 17;
+  double disk_read_iops = 18;
+  double disk_write_iops = 19;
+  double disk_util_percent = 20;
+  uint64 disk_read_bytes_total = 21;
+  uint64 disk_write_bytes_total = 22;
+
+  // per disk
+  repeated VMRuntimeDiskMetric disks = 23;
+
+  // NETWORK
+  double net_rx_bytes_per_sec = 24;
+  double net_tx_bytes_per_sec = 25;
+  double net_rx_packets_per_sec = 26;
+  double net_tx_packets_per_sec = 27;
+  uint64 net_rx_errors = 28;
+  uint64 net_tx_errors = 29;
+  uint64 net_rx_bytes_total = 30;
+  uint64 net_tx_bytes_total = 31;
+
+  // GPU
+  uint64 gpu_count = 32;
+  double gpu_util_percent = 33;
+  uint64 gpu_memory_used_bytes = 34;
+  uint64 gpu_memory_total_bytes = 35;
+  double gpu_memory_util_percent = 36;
+  uint64 gpu_process_count = 37;
+  repeated VMRuntimeGPUMetric gpus = 38;
+
+  // state
+  string vm_state = 39;
+  uint64 uptime_seconds = 40;
+}
+
+//////////////////////////////////////////////////////////////
+///////////////////////  STREAM FRAME  ////////////////////////
+//////////////////////////////////////////////////////////////
+
+// ⚠️ dùng cho dashboard VM list
+message VMLiteMetricsStreamFrame {
+  string node_id = 1;
+  int64 timestamp_unix = 2;
+  repeated VMLiteMetrics metrics = 3;
+}
+
+// ⚠️ chỉ stream khi user mở VM detail
+message VMRuntimeMetricsStreamFrame {
+  string node_id = 1;
+  int64 timestamp_unix = 2;
+  VMRuntimeMetrics metrics = 3;
+}
+
+//////////////////////////////////////////////////////////////
+///////////////////////  RPC REQUEST  /////////////////////////
+//////////////////////////////////////////////////////////////
+
+// lite stream (always-on): BE subscribe theo node + interval
+message VMLiteSubscribeRequest {
+  string node_id = 1;
+  uint32 interval_seconds = 2; // default = 1
+}
+
+// runtime detail stream: chỉ subscribe khi BE cần VM detail
+message VMRuntimeSubscribeRequest {
+  string node_id = 1;
+  string vm_id = 2;
+  uint32 interval_seconds = 3; // optional, backend có thể ignore
+}
+
+//////////////////////////////////////////////////////////////
+////////////////////////  SERVICE  ////////////////////////////
+//////////////////////////////////////////////////////////////
+
+service VMMetricService {
+  // always-on cho dashboard list
+  rpc StreamVMLiteMetrics(VMLiteSubscribeRequest)
+      returns (stream VMLiteMetricsStreamFrame);
+
+  // on-demand khi mở VM detail
+  rpc StreamVMRuntimeMetrics(VMRuntimeSubscribeRequest)
+      returns (stream VMRuntimeMetricsStreamFrame);
+}

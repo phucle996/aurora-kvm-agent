@@ -126,21 +126,38 @@ type netIfCounterSnapshot struct {
 	TxPackets uint64
 }
 
+type diskAggregateLite struct {
+	ReadMBS     float64
+	WriteMBS    float64
+	TotalMBS    float64
+	UtilPercent float64
+	IOPS        float64
+}
+
+type netAggregateLite struct {
+	RxMBS      float64
+	TxMBS      float64
+	TotalMBS   float64
+	PacketRate float64
+}
+
+type gpuAggregateLite struct {
+	Count           uint64
+	TotalUtil       float64
+	MemoryUsedBytes uint64
+	MemoryTotalByte uint64
+}
+
 type NodeMetricsReader struct {
 	conn   *metric.ConnManager
 	logger *slog.Logger
 
 	mu                 sync.Mutex
+	delta              *deltaEngine
 	prevSnapshot       procCPUSnapshot
 	hasPrevSnapshot    bool
 	prevVMStatSnapshot vmStatSnapshot
 	hasPrevVMStat      bool
-	prevDiskStats      map[string]diskStatSnapshot
-	prevDiskAt         time.Time
-	hasPrevDiskStats   bool
-	prevNetStats       map[string]netIfCounterSnapshot
-	prevNetAt          time.Time
-	hasPrevNetStats    bool
 	cpuInfoLoaded      bool
 	cpuStatic          cpuStaticInfo
 	memInfoLoaded      bool

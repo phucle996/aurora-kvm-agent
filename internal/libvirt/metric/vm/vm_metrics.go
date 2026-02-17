@@ -22,6 +22,12 @@ type vmSample struct {
 	at    time.Time
 }
 
+type vmLiteSample struct {
+	netRXBytes uint64
+	netTXBytes uint64
+	at         time.Time
+}
+
 type vmRuntimeSample struct {
 	diskReadBytes  uint64
 	diskWriteBytes uint64
@@ -40,6 +46,7 @@ type VMMetricsReader struct {
 
 	mu          sync.Mutex
 	prev        map[string]vmSample
+	prevLite    map[string]vmLiteSample
 	prevRuntime map[string]vmRuntimeSample
 	cores       float64
 }
@@ -54,6 +61,7 @@ func NewVMMetricsReader(conn *metric.ConnManager, logger *slog.Logger) *VMMetric
 		conn:        conn,
 		logger:      logger,
 		prev:        map[string]vmSample{},
+		prevLite:    map[string]vmLiteSample{},
 		prevRuntime: map[string]vmRuntimeSample{},
 		cores:       float64(runtime.NumCPU()),
 	}
@@ -101,23 +109,21 @@ func (r *VMMetricsReader) Collect(ctx context.Context, nodeID string) ([]model.V
 			ramTotal = ramUsed
 		}
 
-		diskRead, diskWrite := sumBySuffix(fields, golibvirt.DomainStatsBlockSuffixRdBytes, golibvirt.DomainStatsBlockSuffixWrBytes)
 		netRx, netTx := sumBySuffix(fields, golibvirt.DomainStatsNetSuffixRxBytes, golibvirt.DomainStatsNetSuffixTxBytes)
+		netRxPS, netTxPS := r.computeLiteNetRates(vmID, netRx, netTx, now)
 
 		out = append(out, model.VMMetrics{
-			NodeID:         nodeID,
-			VMID:           vmID,
-			VMName:         rec.Dom.Name,
-			State:          state,
-			Timestamp:      now,
-			CPUUsagePct:    cpuPct,
-			VCPUCount:      fields[golibvirt.DomainStatsVCPUCurrent],
-			RAMUsedBytes:   ramUsed,
-			RAMTotalBytes:  ramTotal,
-			DiskReadBytes:  diskRead,
-			DiskWriteBytes: diskWrite,
-			NetRxBytes:     netRx,
-			NetTxBytes:     netTx,
+			NodeID:           nodeID,
+			VMID:             vmID,
+			VMName:           rec.Dom.Name,
+			State:            state,
+			TimestampUnix:    now.Unix(),
+			CPUUsagePct:      cpuPct,
+			VCPUCount:        fields[golibvirt.DomainStatsVCPUCurrent],
+			RAMUsedBytes:     ramUsed,
+			RAMTotalBytes:    ramTotal,
+			NetRxBytesPerSec: netRxPS,
+			NetTxBytesPerSec: netTxPS,
 		})
 	}
 	return out, nil
@@ -191,10 +197,10 @@ func (r *VMMetricsReader) CollectRuntime(ctx context.Context, nodeID string) ([]
 
 		perDisk := buildPerDiskMetrics(uintFields, strFields)
 		out = append(out, model.VMRuntimeMetrics{
-			NodeID: nodeID,
-			VMID:   vmID,
-			VMName: rec.Dom.Name,
-			TS:     now,
+			NodeID:        nodeID,
+			VMID:          vmID,
+			VMName:        rec.Dom.Name,
+			TimestampUnix: now.Unix(),
 
 			CPUUsagePercent: cpuPct,
 			CPUStealPercent: 0,
@@ -218,14 +224,14 @@ func (r *VMMetricsReader) CollectRuntime(ctx context.Context, nodeID string) ([]
 			DiskWriteBytesTotal:  diskWriteTotal,
 			Disks:                perDisk,
 
-			NetRXBytesPerSec:   nRXPS,
-			NetTXBytesPerSec:   nTXPS,
-			NetRXPacketsPerSec: nRXPktPS,
-			NetTXPacketsPerSec: nTXPktPS,
-			NetRXErrors:        netRXErrTotal,
-			NetTXErrors:        netTXErrTotal,
-			NetRXBytesTotal:    netRXTotal,
-			NetTXBytesTotal:    netTXTotal,
+			NetRxBytesPerSec:   nRXPS,
+			NetTxBytesPerSec:   nTXPS,
+			NetRxPacketsPerSec: nRXPktPS,
+			NetTxPacketsPerSec: nTXPktPS,
+			NetRxErrors:        netRXErrTotal,
+			NetTxErrors:        netTXErrTotal,
+			NetRxBytesTotal:    netRXTotal,
+			NetTxBytesTotal:    netTXTotal,
 
 			GPUCount:             0,
 			GPUUtilPercent:       0,
@@ -241,6 +247,29 @@ func (r *VMMetricsReader) CollectRuntime(ctx context.Context, nodeID string) ([]
 	}
 
 	return out, nil
+}
+
+func (r *VMMetricsReader) computeLiteNetRates(vmID string, netRXBytes, netTXBytes uint64, at time.Time) (float64, float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	prev, ok := r.prevLite[vmID]
+	r.prevLite[vmID] = vmLiteSample{
+		netRXBytes: netRXBytes,
+		netTXBytes: netTXBytes,
+		at:         at,
+	}
+	if !ok {
+		return 0, 0
+	}
+
+	dt := at.Sub(prev.at).Seconds()
+	if dt <= 0 {
+		return 0, 0
+	}
+	rxPerSec := deltaPerSec(netRXBytes, prev.netRXBytes, dt)
+	txPerSec := deltaPerSec(netTXBytes, prev.netTXBytes, dt)
+	return rxPerSec, txPerSec
 }
 
 func (r *VMMetricsReader) computeCPU(vmID string, cpuNs uint64, at time.Time) float64 {

@@ -2,8 +2,6 @@ package collector
 
 import (
 	"context"
-	"encoding/json"
-	"hash/fnv"
 	"log/slog"
 	"sort"
 	"sync"
@@ -31,15 +29,12 @@ type Scheduler struct {
 
 	mu sync.Mutex
 
-	latestNodeStatic *model.NodeStaticMetrics
-	lastNodeHash     uint64
-	nodeSynced       bool
-
 	latestVMInfoByID map[string]model.VMInfo
 	lastVMInfoByID   map[string]model.VMInfo
 	vmInfoSynced     bool
 }
 
+// NewScheduler wires collectors, sink, and runtime intervals for all metric loops.
 func NewScheduler(
 	logger *slog.Logger,
 	node *NodeCollector,
@@ -49,6 +44,12 @@ func NewScheduler(
 	nodeInterval, infoSyncInterval, vmInterval, vmRuntimeInterval, errorBackoff time.Duration,
 	agentVersion string,
 ) *Scheduler {
+	if nodeInterval <= 0 {
+		nodeInterval = 1 * time.Second
+	}
+	if vmInterval <= 0 {
+		vmInterval = 1 * time.Second
+	}
 	if errorBackoff <= 0 {
 		errorBackoff = time.Second
 	}
@@ -74,7 +75,6 @@ func NewScheduler(
 			"node_metrics_stream",
 			"vm_metrics_stream",
 			"vm_runtime_metrics_stream",
-			"node_info_sync",
 			"vm_info_sync",
 		},
 		latestVMInfoByID: map[string]model.VMInfo{},
@@ -82,6 +82,7 @@ func NewScheduler(
 	}
 }
 
+// Run starts all periodic loops and stops when context is cancelled or any loop fails.
 func (s *Scheduler) Run(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -99,72 +100,31 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	return g.Wait()
 }
 
+// runNodeLoop periodically collects node metrics and pushes them to sink.
 func (s *Scheduler) runNodeLoop(ctx context.Context) error {
-	ticker := time.NewTicker(s.nodeInterval)
-	defer ticker.Stop()
-
-	if err := s.collectAndSendNode(ctx); err != nil {
-		s.logger.Warn("initial node collect failed", "error", err)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err := s.collectAndSendNode(ctx); err != nil {
-				s.logger.Error("node collect/send failed", "error", err)
-				s.sleepWithContext(ctx, s.errorBackoff)
-			}
-		}
-	}
+	return s.runTickerLoop(ctx, "node", s.nodeInterval, func(runCtx context.Context) error {
+		return s.collectAndSendNode(runCtx)
+	})
 }
 
+// runVMLoop periodically collects VM lite metrics and pushes them to sink.
 func (s *Scheduler) runVMLoop(ctx context.Context) error {
-	ticker := time.NewTicker(s.vmInterval)
-	defer ticker.Stop()
-
-	if err := s.collectAndSendVM(ctx); err != nil {
-		s.logger.Warn("initial vm collect failed", "error", err)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err := s.collectAndSendVM(ctx); err != nil {
-				s.logger.Error("vm collect/send failed", "error", err)
-				s.sleepWithContext(ctx, s.errorBackoff)
-			}
-		}
-	}
+	return s.runTickerLoop(ctx, "vm", s.vmInterval, func(runCtx context.Context) error {
+		return s.collectAndSendVM(runCtx)
+	})
 }
 
+// runVMRuntimeLoop periodically collects VM runtime detail metrics when runtime collector is enabled.
 func (s *Scheduler) runVMRuntimeLoop(ctx context.Context) error {
 	if s.vmRuntime == nil {
 		return nil
 	}
-	ticker := time.NewTicker(s.vmRuntimeInterval)
-	defer ticker.Stop()
-
-	if err := s.collectAndSendVMRuntime(ctx); err != nil {
-		s.logger.Warn("initial vm runtime collect failed", "error", err)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err := s.collectAndSendVMRuntime(ctx); err != nil {
-				s.logger.Error("vm runtime collect/send failed", "error", err)
-				s.sleepWithContext(ctx, s.errorBackoff)
-			}
-		}
-	}
+	return s.runTickerLoop(ctx, "vm runtime", s.vmRuntimeInterval, func(runCtx context.Context) error {
+		return s.collectAndSendVMRuntime(runCtx)
+	})
 }
 
+// runInfoPeriodicLoop periodically sends full VM info sync snapshots.
 func (s *Scheduler) runInfoPeriodicLoop(ctx context.Context) error {
 	ticker := time.NewTicker(s.infoSyncInterval)
 	defer ticker.Stop()
@@ -174,9 +134,6 @@ func (s *Scheduler) runInfoPeriodicLoop(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := s.syncNodeInfoPeriodic(ctx); err != nil {
-				s.logger.Error("node info periodic sync failed", "error", err)
-			}
 			if err := s.syncVMInfoPeriodic(ctx); err != nil {
 				s.logger.Error("vm info periodic sync failed", "error", err)
 			}
@@ -184,17 +141,38 @@ func (s *Scheduler) runInfoPeriodicLoop(ctx context.Context) error {
 	}
 }
 
+// runTickerLoop executes one immediate run, then keeps running by interval with backoff on errors.
+func (s *Scheduler) runTickerLoop(ctx context.Context, name string, interval time.Duration, fn func(context.Context) error) error {
+	if err := fn(ctx); err != nil {
+		s.logger.Warn("initial collect failed", "loop", name, "error", err)
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := fn(ctx); err != nil {
+				s.logger.Error("collect/send failed", "loop", name, "error", err)
+				s.sleepWithContext(ctx, s.errorBackoff)
+			}
+		}
+	}
+}
+
+// collectAndSendNode executes one node metrics cycle.
 func (s *Scheduler) collectAndSendNode(ctx context.Context) error {
 	m, err := s.node.Collect(ctx)
 	if err != nil {
 		return err
 	}
-	if err := s.sink.SendNodeMetrics(ctx, m); err != nil {
-		return err
-	}
-	return s.syncNodeInfoFromMetric(ctx, m, "runtime_change")
+	return s.sink.SendNodeMetrics(ctx, m)
 }
 
+// collectAndSendVM executes one VM lite metrics cycle and updates VM info sync when runtime stream is disabled.
 func (s *Scheduler) collectAndSendVM(ctx context.Context) error {
 	metrics, err := s.vm.Collect(ctx)
 	if err != nil {
@@ -202,7 +180,7 @@ func (s *Scheduler) collectAndSendVM(ctx context.Context) error {
 	}
 	if len(metrics) == 0 {
 		if s.vmRuntime == nil {
-			return s.syncVMInfoFromMap(ctx, map[string]model.VMInfo{}, "", time.Now().UTC(), "runtime_change")
+			return s.syncVMInfoFromMap(ctx, map[string]model.VMInfo{}, "", time.Now().UTC().Unix(), "runtime_change")
 		}
 		return nil
 	}
@@ -215,13 +193,14 @@ func (s *Scheduler) collectAndSendVM(ctx context.Context) error {
 	return nil
 }
 
+// collectAndSendVMRuntime executes one VM runtime detail cycle and updates VM info sync.
 func (s *Scheduler) collectAndSendVMRuntime(ctx context.Context) error {
 	metrics, err := s.vmRuntime.Collect(ctx)
 	if err != nil {
 		return err
 	}
 	if len(metrics) == 0 {
-		return s.syncVMInfoFromMap(ctx, map[string]model.VMInfo{}, "", time.Now().UTC(), "runtime_change")
+		return s.syncVMInfoFromMap(ctx, map[string]model.VMInfo{}, "", time.Now().UTC().Unix(), "runtime_change")
 	}
 	if err := s.sink.SendVMRuntimeMetrics(ctx, metrics); err != nil {
 		return err
@@ -229,70 +208,32 @@ func (s *Scheduler) collectAndSendVMRuntime(ctx context.Context) error {
 	return s.syncVMInfoFromRuntimeMetrics(ctx, metrics, "runtime_change")
 }
 
-func (s *Scheduler) syncNodeInfoFromMetric(ctx context.Context, m model.NodeMetrics, reason string) error {
-	staticMetric := model.BuildNodeStaticMetrics(m)
-	hash := hashNodeStatic(staticMetric)
-
-	s.mu.Lock()
-	s.latestNodeStatic = &staticMetric
-	syncMode := model.SyncModeDelta
-	shouldSync := false
-	if !s.nodeSynced {
-		syncMode = model.SyncModeFull
-		shouldSync = true
-		reason = "agent_boot"
-	} else if s.lastNodeHash != hash {
-		shouldSync = true
-	}
-	s.mu.Unlock()
-
-	if !shouldSync {
-		return nil
-	}
-
-	info := model.NodeInfoSync{
-		NodeID:       staticMetric.NodeID,
-		Timestamp:    staticMetric.Timestamp,
-		SyncMode:     syncMode,
-		Reason:       reason,
-		Info:         staticMetric,
-		AgentVersion: s.agentVersion,
-		Capabilities: append([]string(nil), s.capabilities...),
-	}
-	if err := s.sink.SendNodeInfoSync(ctx, info); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	s.nodeSynced = true
-	s.lastNodeHash = hash
-	s.mu.Unlock()
-	return nil
-}
-
+// syncVMInfoFromVMMetrics converts VM lite metrics into VM info state and sends sync payload.
 func (s *Scheduler) syncVMInfoFromVMMetrics(ctx context.Context, metrics []model.VMMetrics, reason string) error {
 	currentMap := model.BuildVMInfoMap(metrics)
-	ts := time.Now().UTC()
+	tsUnix := time.Now().UTC().Unix()
 	nodeID := ""
 	if len(metrics) > 0 {
-		ts = metrics[0].Timestamp
+		tsUnix = metrics[0].TimestampUnix
 		nodeID = metrics[0].NodeID
 	}
-	return s.syncVMInfoFromMap(ctx, currentMap, nodeID, ts, reason)
+	return s.syncVMInfoFromMap(ctx, currentMap, nodeID, tsUnix, reason)
 }
 
+// syncVMInfoFromRuntimeMetrics converts VM runtime detail metrics into VM info state and sends sync payload.
 func (s *Scheduler) syncVMInfoFromRuntimeMetrics(ctx context.Context, metrics []model.VMRuntimeMetrics, reason string) error {
 	currentMap := model.BuildVMInfoMapFromRuntime(metrics)
-	ts := time.Now().UTC()
+	tsUnix := time.Now().UTC().Unix()
 	nodeID := ""
 	if len(metrics) > 0 {
-		ts = metrics[0].TS
+		tsUnix = metrics[0].TimestampUnix
 		nodeID = metrics[0].NodeID
 	}
-	return s.syncVMInfoFromMap(ctx, currentMap, nodeID, ts, reason)
+	return s.syncVMInfoFromMap(ctx, currentMap, nodeID, tsUnix, reason)
 }
 
-func (s *Scheduler) syncVMInfoFromMap(ctx context.Context, currentMap map[string]model.VMInfo, nodeID string, ts time.Time, reason string) error {
+// syncVMInfoFromMap computes full/delta VM info payload and sends it through sink.
+func (s *Scheduler) syncVMInfoFromMap(ctx context.Context, currentMap map[string]model.VMInfo, nodeID string, tsUnix int64, reason string) error {
 	if nodeID == "" {
 		nodeID = s.resolveVMNodeID(currentMap)
 	}
@@ -302,12 +243,12 @@ func (s *Scheduler) syncVMInfoFromMap(ctx context.Context, currentMap map[string
 	}
 
 	info := model.VMInfoSync{
-		NodeID:       nodeID,
-		Timestamp:    ts,
-		SyncMode:     syncMode,
-		Reason:       reason,
-		Upserts:      upserts,
-		RemovedVMIDs: removed,
+		NodeID:        nodeID,
+		TimestampUnix: tsUnix,
+		SyncMode:      syncMode,
+		Reason:        reason,
+		Upserts:       upserts,
+		RemovedVMIDs:  removed,
 	}
 	if syncMode == model.SyncModeFull {
 		info.Reason = "agent_boot"
@@ -325,35 +266,7 @@ func (s *Scheduler) syncVMInfoFromMap(ctx context.Context, currentMap map[string
 	return nil
 }
 
-func (s *Scheduler) syncNodeInfoPeriodic(ctx context.Context) error {
-	s.mu.Lock()
-	if s.latestNodeStatic == nil {
-		s.mu.Unlock()
-		return nil
-	}
-	staticMetric := *s.latestNodeStatic
-	s.mu.Unlock()
-
-	info := model.NodeInfoSync{
-		NodeID:       staticMetric.NodeID,
-		Timestamp:    time.Now().UTC(),
-		SyncMode:     model.SyncModeFull,
-		Reason:       "periodic_sync",
-		Info:         staticMetric,
-		AgentVersion: s.agentVersion,
-		Capabilities: append([]string(nil), s.capabilities...),
-	}
-	if err := s.sink.SendNodeInfoSync(ctx, info); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	s.nodeSynced = true
-	s.lastNodeHash = hashNodeStatic(staticMetric)
-	s.mu.Unlock()
-	return nil
-}
-
+// syncVMInfoPeriodic sends a full VM info snapshot on periodic timer.
 func (s *Scheduler) syncVMInfoPeriodic(ctx context.Context) error {
 	s.mu.Lock()
 	if len(s.latestVMInfoByID) == 0 {
@@ -368,12 +281,12 @@ func (s *Scheduler) syncVMInfoPeriodic(ctx context.Context) error {
 	s.mu.Unlock()
 
 	info := model.VMInfoSync{
-		NodeID:       nodeID,
-		Timestamp:    time.Now().UTC(),
-		SyncMode:     model.SyncModeFull,
-		Reason:       "periodic_sync",
-		Upserts:      full,
-		RemovedVMIDs: []string{},
+		NodeID:        nodeID,
+		TimestampUnix: time.Now().UTC().Unix(),
+		SyncMode:      model.SyncModeFull,
+		Reason:        "periodic_sync",
+		Upserts:       full,
+		RemovedVMIDs:  []string{},
 	}
 	if err := s.sink.SendVMInfoSync(ctx, info); err != nil {
 		return err
@@ -435,15 +348,6 @@ func (s *Scheduler) sleepWithContext(ctx context.Context, d time.Duration) {
 	}
 }
 
-func hashNodeStatic(m model.NodeStaticMetrics) uint64 {
-	copyMetric := m
-	copyMetric.Timestamp = time.Time{}
-	data, _ := json.Marshal(copyMetric)
-	h := fnv.New64a()
-	_, _ = h.Write(data)
-	return h.Sum64()
-}
-
 func cloneVMInfoMap(in map[string]model.VMInfo) map[string]model.VMInfo {
 	out := make(map[string]model.VMInfo, len(in))
 	for k, v := range in {
@@ -475,9 +379,12 @@ func (s *Scheduler) resolveVMNodeID(current map[string]model.VMInfo) string {
 }
 
 func AsNodeEnvelope(m model.NodeMetrics) model.Envelope {
-	return model.Envelope{Type: model.MetricTypeNode, NodeID: m.NodeID, Timestamp: m.Timestamp, Payload: m}
+	return model.Envelope{Type: model.MetricTypeNodeLite, NodeID: m.NodeID, TimestampUnix: m.TimestampUnix, Payload: m}
 }
 
-func AsVMEnvelope(nodeID string, payload []model.VMMetrics, at time.Time) model.Envelope {
-	return model.Envelope{Type: model.MetricTypeVM, NodeID: nodeID, Timestamp: at, Payload: payload}
+func AsVMEnvelope(nodeID string, payload []model.VMMetrics, atUnix int64) model.Envelope {
+	if atUnix == 0 {
+		atUnix = time.Now().UTC().Unix()
+	}
+	return model.Envelope{Type: model.MetricTypeVMLite, NodeID: nodeID, TimestampUnix: atUnix, Payload: payload}
 }

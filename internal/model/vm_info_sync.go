@@ -1,24 +1,11 @@
 package model
 
-import (
-	"sort"
-	"time"
-)
+import "sort"
 
 const (
 	SyncModeFull  = "full"
 	SyncModeDelta = "delta"
 )
-
-type NodeInfoSync struct {
-	NodeID       string            `json:"node_id"`
-	Timestamp    time.Time         `json:"timestamp"`
-	SyncMode     string            `json:"sync_mode"`
-	Reason       string            `json:"reason"`
-	Info         NodeStaticMetrics `json:"info"`
-	AgentVersion string            `json:"agent_version"`
-	Capabilities []string          `json:"capabilities"`
-}
 
 type VMInfo struct {
 	NodeID        string `json:"node_id"`
@@ -32,15 +19,15 @@ type VMInfo struct {
 }
 
 type VMInfoSync struct {
-	NodeID       string    `json:"node_id"`
-	Timestamp    time.Time `json:"timestamp"`
-	SyncMode     string    `json:"sync_mode"`
-	Reason       string    `json:"reason"`
-	Upserts      []VMInfo  `json:"upserts"`
-	RemovedVMIDs []string  `json:"removed_vm_ids"`
+	NodeID        string   `json:"node_id"`
+	TimestampUnix int64    `json:"timestamp_unix"`
+	SyncMode      string   `json:"sync_mode"`
+	Reason        string   `json:"reason"`
+	Upserts       []VMInfo `json:"upserts"`
+	RemovedVMIDs  []string `json:"removed_vm_ids"`
 }
 
-func BuildVMInfoFromMetric(m VMMetrics) VMInfo {
+func BuildVMInfoFromLiteMetric(m VMLiteMetrics) VMInfo {
 	return VMInfo{
 		NodeID:        m.NodeID,
 		VMID:          m.VMID,
@@ -53,13 +40,13 @@ func BuildVMInfoFromMetric(m VMMetrics) VMInfo {
 	}
 }
 
-func BuildVMInfoMap(metrics []VMMetrics) map[string]VMInfo {
+func BuildVMInfoMapFromLite(metrics []VMLiteMetrics) map[string]VMInfo {
 	out := make(map[string]VMInfo, len(metrics))
 	for _, metric := range metrics {
 		if metric.VMID == "" {
 			continue
 		}
-		out[metric.VMID] = BuildVMInfoFromMetric(metric)
+		out[metric.VMID] = BuildVMInfoFromLiteMetric(metric)
 	}
 	return out
 }

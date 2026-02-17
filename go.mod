@@ -6,7 +6,6 @@ require (
 	github.com/digitalocean/go-libvirt v0.0.0-20260127224054-f7013236e99a
 	golang.org/x/sync v0.19.0
 	google.golang.org/grpc v1.78.0
-	nhooyr.io/websocket v1.8.17
 )
 
 require (
