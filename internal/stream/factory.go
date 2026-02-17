@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	defaultNodeStreamMethod      = "/aurora.metrics.v1.MetricsService/StreamNodeMetrics"
-	defaultVMInfoSyncMethod      = "/aurora.metrics.v1.MetricsService/SyncVMInfo"
-	defaultVMStreamMethod        = "/aurora.metrics.v1.MetricsService/StreamVMMetrics"
-	defaultVMRuntimeStreamMethod = "/aurora.metrics.v1.MetricsService/StreamVMRuntimeMetrics"
+	defaultNodeStreamMethod       = "/aurora.metrics.v1.MetricsService/StreamNodeMetrics"
+	defaultNodeHardwareInfoMethod = "/aurora.metrics.v1.MetricsService/ReportNodeHardwareInfo"
+	defaultVMInfoSyncMethod       = "/aurora.metrics.v1.MetricsService/SyncVMInfo"
+	defaultVMStreamMethod         = "/aurora.metrics.v1.MetricsService/StreamVMMetrics"
+	defaultVMRuntimeStreamMethod  = "/aurora.metrics.v1.MetricsService/StreamVMRuntimeMetrics"
 )
 
 func NewSinkFromConfig(cfg config.Config, tlsCfg *tls.Config, logger *slog.Logger) (Sink, error) {
@@ -20,6 +21,7 @@ func NewSinkFromConfig(cfg config.Config, tlsCfg *tls.Config, logger *slog.Logge
 		tlsCfg,
 		cfg.BackendToken,
 		defaultNodeStreamMethod,
+		defaultNodeHardwareInfoMethod,
 		defaultVMInfoSyncMethod,
 		defaultVMStreamMethod,
 		defaultVMRuntimeStreamMethod,

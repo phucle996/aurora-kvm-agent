@@ -36,21 +36,22 @@ func (jsonCodec) Unmarshal(data []byte, v any) error {
 type GRPCClient struct {
 	mu sync.Mutex
 
-	logger          *slog.Logger
-	addr            string
-	tlsConfig       *tls.Config
-	token           string
-	nodeMethod      string
-	vmInfoMethod    string
-	vmMethod        string
-	vmRuntimeMethod string
-	conn            *grpc.ClientConn
-	nodeStream      grpc.ClientStream
-	vmStream        grpc.ClientStream
-	vmRuntimeStream grpc.ClientStream
-	dialTimeout     time.Duration
-	maxRetries      int
-	retryBackoff    time.Duration
+	logger                 *slog.Logger
+	addr                   string
+	tlsConfig              *tls.Config
+	token                  string
+	nodeMethod             string
+	nodeHardwareInfoMethod string
+	vmInfoMethod           string
+	vmMethod               string
+	vmRuntimeMethod        string
+	conn                   *grpc.ClientConn
+	nodeStream             grpc.ClientStream
+	vmStream               grpc.ClientStream
+	vmRuntimeStream        grpc.ClientStream
+	dialTimeout            time.Duration
+	maxRetries             int
+	retryBackoff           time.Duration
 }
 
 func NewGRPCClient(
@@ -58,6 +59,7 @@ func NewGRPCClient(
 	tlsCfg *tls.Config,
 	token string,
 	nodeMethod string,
+	nodeHardwareInfoMethod string,
 	vmInfoMethod string,
 	vmMethod string,
 	vmRuntimeMethod string,
@@ -65,17 +67,18 @@ func NewGRPCClient(
 ) *GRPCClient {
 	encoding.RegisterCodec(jsonCodec{})
 	return &GRPCClient{
-		logger:          logger,
-		addr:            addr,
-		tlsConfig:       tlsCfg,
-		token:           token,
-		nodeMethod:      nodeMethod,
-		vmInfoMethod:    vmInfoMethod,
-		vmMethod:        vmMethod,
-		vmRuntimeMethod: vmRuntimeMethod,
-		dialTimeout:     8 * time.Second,
-		maxRetries:      5,
-		retryBackoff:    time.Second,
+		logger:                 logger,
+		addr:                   addr,
+		tlsConfig:              tlsCfg,
+		token:                  token,
+		nodeMethod:             nodeMethod,
+		nodeHardwareInfoMethod: nodeHardwareInfoMethod,
+		vmInfoMethod:           vmInfoMethod,
+		vmMethod:               vmMethod,
+		vmRuntimeMethod:        vmRuntimeMethod,
+		dialTimeout:            8 * time.Second,
+		maxRetries:             5,
+		retryBackoff:           time.Second,
 	}
 }
 
@@ -84,6 +87,13 @@ func (c *GRPCClient) SendNodeMetrics(ctx Context, m model.NodeMetrics) error {
 	defer c.mu.Unlock()
 	frame := NewNodeFrame(m)
 	return c.sendNodeFrameWithRetryLocked(ctx, frame)
+}
+
+func (c *GRPCClient) SendNodeHardwareInfo(ctx Context, info model.NodeHardwareInfo) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	frame := NewNodeHardwareInfoFrame(info)
+	return c.sendNodeHardwareInfoWithRetryLocked(ctx, frame)
 }
 
 func (c *GRPCClient) SendVMMetrics(ctx Context, metrics []model.VMMetrics) error {
@@ -387,6 +397,61 @@ func (c *GRPCClient) sendVMInfoWithRetryLocked(ctx Context, frame VMInfoSyncFram
 		lastErr = fmt.Errorf("unknown stream error")
 	}
 	return fmt.Errorf("send vm info sync frame failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+func (c *GRPCClient) sendNodeHardwareInfoWithRetryLocked(ctx Context, frame NodeHardwareInfoFrame) error {
+	var lastErr error
+	maxRetries := c.maxRetries
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if err := c.ensureConnLocked(ctx); err != nil {
+			lastErr = err
+			c.resetConnLocked()
+			if !c.waitRetryLocked(ctx, attempt, maxRetries) {
+				break
+			}
+			continue
+		}
+
+		method := c.nodeHardwareInfoMethod
+		if method == "" {
+			return fmt.Errorf("grpc node hardware info method is empty")
+		}
+
+		streamCtx := c.decorateContext(ctx)
+		var ack struct {
+			NodeID         string `json:"node_id"`
+			AcceptedAtUnix int64  `json:"accepted_at_unix"`
+			Message        string `json:"message"`
+		}
+		err := c.conn.Invoke(streamCtx, method, frame, &ack)
+		if err == nil {
+			return nil
+		}
+
+		lastErr = fmt.Errorf("send node hardware info frame: %w", err)
+		c.logger.Warn(
+			"grpc node-hardware-info send failed, resetting conn",
+			"addr",
+			c.addr,
+			"attempt",
+			attempt,
+			"max_attempts",
+			maxRetries,
+			"error",
+			err,
+		)
+		c.resetConnLocked()
+		if !c.waitRetryLocked(ctx, attempt, maxRetries) {
+			break
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("unknown stream error")
+	}
+	return fmt.Errorf("send node hardware info frame failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 func (c *GRPCClient) resetConnLocked() {

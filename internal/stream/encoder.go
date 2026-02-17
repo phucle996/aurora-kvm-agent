@@ -9,6 +9,7 @@ import (
 
 type Sink interface {
 	SendNodeMetrics(ctx Context, m model.NodeMetrics) error
+	SendNodeHardwareInfo(ctx Context, info model.NodeHardwareInfo) error
 	SendVMMetrics(ctx Context, metrics []model.VMMetrics) error
 	SendVMRuntimeMetrics(ctx Context, metrics []model.VMRuntimeMetrics) error
 	SendVMInfoSync(ctx Context, info model.VMInfoSync) error
@@ -41,6 +42,12 @@ type VMInfoSyncFrame struct {
 	Reason        string         `json:"reason"`
 	Upserts       []model.VMInfo `json:"upserts"`
 	RemovedVMIDs  []string       `json:"removed_vm_ids"`
+}
+
+type NodeHardwareInfoFrame struct {
+	NodeID        string                 `json:"node_id"`
+	TimestampUnix int64                  `json:"timestamp_unix"`
+	Metrics       model.NodeHardwareInfo `json:"metrics"`
 }
 
 type VMRuntimeFrame struct {
@@ -85,5 +92,13 @@ func NewVMInfoSyncFrame(info model.VMInfoSync) VMInfoSyncFrame {
 		Reason:        info.Reason,
 		Upserts:       append([]model.VMInfo(nil), info.Upserts...),
 		RemovedVMIDs:  append([]string(nil), info.RemovedVMIDs...),
+	}
+}
+
+func NewNodeHardwareInfoFrame(info model.NodeHardwareInfo) NodeHardwareInfoFrame {
+	return NodeHardwareInfoFrame{
+		NodeID:        info.NodeID,
+		TimestampUnix: info.CollectedAtUnix,
+		Metrics:       info,
 	}
 }

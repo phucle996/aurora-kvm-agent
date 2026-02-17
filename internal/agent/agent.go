@@ -51,6 +51,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Agent, error) {
 	nodeReader := libvirtnode.NewNodeMetricsReader(conn, logger)
 	vmReader := libvirtvm.NewVMMetricsReader(conn, logger)
 	nodeCollector := collector.NewNodeCollector(nodeReader, cfg.NodeID, cfg.Hostname)
+	nodeHardwareCollector := collector.NewNodeHardwareCollector(nodeReader, cfg.NodeID, cfg.Hostname)
 	vmCollector := collector.NewVMCollector(vmReader, cfg.NodeID)
 	vmRuntimeCollector := collector.NewVMRuntimeCollector(vmReader, cfg.NodeID)
 
@@ -59,6 +60,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Agent, error) {
 	scheduler := collector.NewScheduler(
 		logger,
 		nodeCollector,
+		nodeHardwareCollector,
 		vmCollector,
 		vmRuntimeCollector,
 		wrappedSink,
@@ -172,6 +174,16 @@ func (s *healthSink) SendNodeMetrics(ctx stream.Context, m model.NodeMetrics) er
 	if m.TimestampUnix > 0 {
 		s.health.MarkNodeSample(time.Unix(m.TimestampUnix, 0).UTC())
 	}
+	return nil
+}
+
+func (s *healthSink) SendNodeHardwareInfo(ctx stream.Context, info model.NodeHardwareInfo) error {
+	err := s.sink.SendNodeHardwareInfo(ctx, info)
+	if err != nil {
+		s.health.SetStreamConnected(false)
+		return err
+	}
+	s.health.SetStreamConnected(true)
 	return nil
 }
 

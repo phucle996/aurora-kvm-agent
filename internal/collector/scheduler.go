@@ -16,6 +16,7 @@ import (
 type Scheduler struct {
 	logger            *slog.Logger
 	node              *NodeCollector
+	nodeHardware      *NodeHardwareCollector
 	vm                *VMCollector
 	vmRuntime         *VMRuntimeCollector
 	sink              stream.Sink
@@ -38,6 +39,7 @@ type Scheduler struct {
 func NewScheduler(
 	logger *slog.Logger,
 	node *NodeCollector,
+	nodeHardware *NodeHardwareCollector,
 	vm *VMCollector,
 	vmRuntime *VMRuntimeCollector,
 	sink stream.Sink,
@@ -62,6 +64,7 @@ func NewScheduler(
 	return &Scheduler{
 		logger:            logger,
 		node:              node,
+		nodeHardware:      nodeHardware,
 		vm:                vm,
 		vmRuntime:         vmRuntime,
 		sink:              sink,
@@ -73,6 +76,7 @@ func NewScheduler(
 		agentVersion:      agentVersion,
 		capabilities: []string{
 			"node_metrics_stream",
+			"node_hardware_info_sync",
 			"vm_metrics_stream",
 			"vm_runtime_metrics_stream",
 			"vm_info_sync",
@@ -126,6 +130,12 @@ func (s *Scheduler) runVMRuntimeLoop(ctx context.Context) error {
 
 // runInfoPeriodicLoop periodically sends full VM info sync snapshots.
 func (s *Scheduler) runInfoPeriodicLoop(ctx context.Context) error {
+	if s.nodeHardware != nil {
+		if err := s.syncNodeHardwarePeriodic(ctx); err != nil {
+			s.logger.Error("node hardware info periodic sync failed", "error", err)
+		}
+	}
+
 	ticker := time.NewTicker(s.infoSyncInterval)
 	defer ticker.Stop()
 
@@ -134,6 +144,11 @@ func (s *Scheduler) runInfoPeriodicLoop(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			if s.nodeHardware != nil {
+				if err := s.syncNodeHardwarePeriodic(ctx); err != nil {
+					s.logger.Error("node hardware info periodic sync failed", "error", err)
+				}
+			}
 			if err := s.syncVMInfoPeriodic(ctx); err != nil {
 				s.logger.Error("vm info periodic sync failed", "error", err)
 			}
@@ -170,6 +185,18 @@ func (s *Scheduler) collectAndSendNode(ctx context.Context) error {
 		return err
 	}
 	return s.sink.SendNodeMetrics(ctx, m)
+}
+
+// syncNodeHardwarePeriodic sends a node hardware info snapshot.
+func (s *Scheduler) syncNodeHardwarePeriodic(ctx context.Context) error {
+	if s.nodeHardware == nil {
+		return nil
+	}
+	info, err := s.nodeHardware.Collect(ctx)
+	if err != nil {
+		return err
+	}
+	return s.sink.SendNodeHardwareInfo(ctx, info)
 }
 
 // collectAndSendVM executes one VM lite metrics cycle and updates VM info sync when runtime stream is disabled.

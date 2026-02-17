@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	HardcodedVersion string = "V0.2"
+	HardcodedVersion string = "V0.3"
 )
 
 type Config struct {
